@@ -1,0 +1,33 @@
+{
+    "video": {
+        "resolution": "1920x1080",
+        "fullscreen": "Off",
+        "vsync": "Off",
+        "fps_limit": 60,
+        "show_fps": "Off"
+    },
+    "audio": {
+        "music": 30,
+        "sfx": 100,
+        "mute": "Off"
+    },
+    "controls": {
+        "up": "w",
+        "down": "s",
+        "left": "a",
+        "right": "d",
+        "dash": "space",
+        "ultimate": "e",
+        "pause": "p"
+    },
+    "gameplay": {
+        "auto_pickup_chest": "On",
+        "auto_apply_chest_reward": "On",
+        "show_offscreen_arrows": "On"
+    },
+    "accessibility": {
+        "screen_shake": 100,
+        "ui_size": 70,
+        "high_contrast": "Off"
+    }
+}
