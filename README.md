@@ -16,7 +16,7 @@ Para executar o jogo na sua máquina, você precisará do Python instalado.
 Clone o repositório:
 
 Bash
-git clone https://github.com/seu-usuario/seu-repositorio-python.git
+git clone [https://github.com/seu-usuario/seu-repositorio-python.git](https://github.com/HelioASjunior/UwH---Python)
 Crie um ambiente virtual (opcional, mas recomendado):
 
 Bash
