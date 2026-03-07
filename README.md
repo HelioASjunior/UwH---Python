@@ -16,7 +16,7 @@ Para executar o jogo na sua máquina, você precisará do Python instalado.
 Clone o repositório:
 
 Bash
-git clone [https://github.com/seu-usuario/seu-repositorio-python.git](https://github.com/HelioASjunior/UwH---Python)
+git clone https://github.com/HelioASjunior/UnderWorldHero-Game
 Crie um ambiente virtual (opcional, mas recomendado):
 
 Bash
