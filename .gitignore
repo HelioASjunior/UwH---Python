@@ -12,6 +12,5 @@ __pycache__/
 
 # Arquivo de salvamento (opcional, se não quiser que seu save pessoal suba)
 save_v2.json
-run_slot_1.json
-run_slot_2.json
-run_slot_3.json
+run_slot_1
+save_data/run_slot_*
