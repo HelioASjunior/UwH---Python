@@ -1,0 +1,14 @@
+# Ambiente Virtual
+.venv/
+venv/
+env/
+
+# Configurações do VS Code
+.vscode/
+
+# Arquivos temporários do Python
+__pycache__/
+*.pyc
+
+# Arquivo de salvamento (opcional, se não quiser que seu save pessoal suba)
+save_v2.json

@@ -3,26 +3,87 @@ import random
 import pygame
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # =========================================================
 # CONFIGURAÇÕES DE PERSISTÊNCIA (SETTINGS.JSON)
 # =========================================================
 
 def load_settings(force_default=False):
-    if force_default:
-        return {
-            "fullscreen": False,
-            "resolution": [1920, 1080],
-            "master_volume": 1.0,
-            "music_volume": 0.7,
-            "sfx_volume": 0.8,
-            "screen_shake": True
+    default_settings = {
+        "video": {
+            "resolution": "1920x1080",
+            "fullscreen": "Off",
+            "vsync": "Off",
+            "fps_limit": 60,
+            "show_fps": "Off"
+        },
+        "audio": {
+            "music": 70,
+            "sfx": 80,
+            "mute": "Off"
+        },
+        "controls": {
+            "up": "w",
+            "down": "s",
+            "left": "a",
+            "right": "d",
+            "dash": "space",
+            "ultimate": "e",
+            "pause": "p"
+        },
+        "gameplay": {
+            "auto_pickup_chest": "On",
+            "auto_apply_chest_reward": "On",
+            "show_offscreen_arrows": "On",
+            "default_difficulty": "Médio"
+        },
+        "accessibility": {
+            "screen_shake": 100,
+            "ui_size": 100,
+            "high_contrast": "Off"
         }
+    }
+
+    if force_default:
+        return json.loads(json.dumps(default_settings))
 
     if os.path.exists("settings.json"):
-        with open("settings.json", "r") as f:
-            return json.load(f)
+        try:
+            with open("settings.json", "r") as f:
+                loaded = json.load(f)
+
+            # Migra formatos antigos (flat) para o formato atual por categoria.
+            if "video" not in loaded:
+                loaded = {
+                    "video": {
+                        "resolution": f"{loaded.get('resolution', [1920, 1080])[0]}x{loaded.get('resolution', [1920, 1080])[1]}",
+                        "fullscreen": "On" if loaded.get("fullscreen", False) else "Off",
+                        "vsync": "Off",
+                        "fps_limit": 60,
+                        "show_fps": "Off"
+                    },
+                    "audio": {
+                        "music": int(loaded.get("music_volume", 0.7) * 100),
+                        "sfx": int(loaded.get("sfx_volume", 0.8) * 100),
+                        "mute": "Off"
+                    },
+                    "controls": default_settings["controls"],
+                    "gameplay": default_settings["gameplay"],
+                    "accessibility": {
+                        "screen_shake": 100 if loaded.get("screen_shake", True) else 0,
+                        "ui_size": 100,
+                        "high_contrast": "Off"
+                    }
+                }
+
+            merged = json.loads(json.dumps(default_settings))
+            for cat, values in loaded.items():
+                if cat in merged and isinstance(values, dict):
+                    merged[cat].update(values)
+            return merged
+        except Exception:
+            return json.loads(json.dumps(default_settings))
 
     return load_settings(force_default=True)
 
@@ -31,8 +92,39 @@ def save_settings(settings):
     with open("settings.json", "w") as f:
         json.dump(settings, f, indent=4)
 
+
+def _deepcopy_settings(src):
+    return json.loads(json.dumps(src))
+
+
+def get_control_key_code(action_name):
+    if not settings or "controls" not in settings:
+        return pygame.K_UNKNOWN
+    key_name = settings["controls"].get(action_name, "")
+    try:
+        return pygame.key.key_code(key_name)
+    except Exception:
+        return pygame.K_UNKNOWN
+
+
+def is_control_pressed(keys, action_name):
+    key_code = get_control_key_code(action_name)
+    if key_code == pygame.K_UNKNOWN:
+        return False
+    return keys[key_code]
+
+
+def apply_audio_runtime(settings_dict):
+    global MUSIC_VOLUME, SFX_VOLUME
+    MUSIC_VOLUME = settings_dict["audio"].get("music", 100) / 100.0
+    SFX_VOLUME = settings_dict["audio"].get("sfx", 100) / 100.0
+    if settings_dict["audio"].get("mute") == "On":
+        pygame.mixer.music.set_volume(0.0)
+    else:
+        pygame.mixer.music.set_volume(MUSIC_VOLUME)
+
 def apply_settings(settings_dict):
-    global SCREEN_W, SCREEN_H, screen, FPS, MUSIC_VOLUME
+    global SCREEN_W, SCREEN_H, screen, FPS, MUSIC_VOLUME, SFX_VOLUME
     res_w, res_h = map(int, settings_dict["video"]["resolution"].split('x'))
     SCREEN_W, SCREEN_H = res_w, res_h
     
@@ -43,9 +135,7 @@ def apply_settings(settings_dict):
     
     FPS = int(settings_dict["video"]["fps_limit"])
     
-    music_vol_percent = settings_dict["audio"]["music"]
-    MUSIC_VOLUME = music_vol_percent / 100.0
-    pygame.mixer.music.set_volume(MUSIC_VOLUME)
+    apply_audio_runtime(settings_dict)
 
 # =========================================================
 # VARIÁVEIS GLOBAIS E INICIAIS (DO ORIGINAL)
@@ -63,6 +153,7 @@ BUILD_TYPE = "META"
 # META-PROGRESSÃO, SAVE E CONQUISTAS
 # =========================================================
 SAVE_FILE = "save_v2.json"
+RUN_SLOT_FILES = ["run_slot_1.json", "run_slot_2.json", "run_slot_3.json"]
 
 # Itens que começam desbloqueados
 DEFAULT_UNLOCKS = [
@@ -192,6 +283,78 @@ def update_mission_progress(m_type, amount, is_absolute=False):
 def save_game():
     with open(SAVE_FILE, "w") as f:
         json.dump(save_data, f)
+
+
+def get_run_slot_path(slot_index):
+    idx = max(0, min(len(RUN_SLOT_FILES) - 1, slot_index))
+    return RUN_SLOT_FILES[idx]
+
+
+def save_run_slot(slot_index=0):
+    if player is None:
+        return False
+
+    data = {
+        "char_id": getattr(player, "char_id", 0),
+        "selected_difficulty": selected_difficulty,
+        "selected_pact": selected_pact,
+        "selected_bg": selected_bg,
+        "kills": kills,
+        "game_time": game_time,
+        "level": level,
+        "xp": xp,
+        "player_hp": player.hp,
+        "player_upgrades": list(player_upgrades),
+        "run_gold_collected": float(globals().get("run_gold_collected", 0.0)),
+    }
+
+    try:
+        with open(get_run_slot_path(slot_index), "w") as f:
+            json.dump(data, f, indent=4)
+        return True
+    except Exception:
+        return False
+
+
+def load_run_slot(slot_index=0):
+    global selected_difficulty, selected_pact, selected_bg
+    global kills, game_time, level, xp, run_gold_collected
+
+    path = get_run_slot_path(slot_index)
+    if not os.path.exists(path):
+        return False
+
+    try:
+        with open(path, "r") as f:
+            data = json.load(f)
+    except Exception:
+        return False
+
+    try:
+        char_id = int(data.get("char_id", 0))
+        selected_difficulty = data.get("selected_difficulty", "MÉDIO")
+        selected_pact = data.get("selected_pact", "NENHUM")
+        selected_bg = data.get("selected_bg", "dungeon")
+        load_all_assets()
+
+        prev_games = save_data["stats"].get("games_played", 0)
+        reset_game(char_id)
+        save_data["stats"]["games_played"] = prev_games
+
+        for upg in data.get("player_upgrades", []):
+            apply_upgrade(upg)
+
+        kills = int(data.get("kills", 0))
+        game_time = float(data.get("game_time", 0.0))
+        level = max(1, int(data.get("level", 1)))
+        xp = int(data.get("xp", 0))
+        if player:
+            player.hp = max(0.1, min(PLAYER_MAX_HP, float(data.get("player_hp", PLAYER_MAX_HP))))
+
+        run_gold_collected = float(data.get("run_gold_collected", 0.0))
+        return True
+    except Exception:
+        return False
 
 load_save() 
 
@@ -659,6 +822,7 @@ class Projectile(pygame.sprite.Sprite):
         self.anim_timer = 0
         self.image = self.anim_frames[0]
         self.rect = self.image.get_rect()
+        self.hitbox = self.rect.inflate(-max(4, self.rect.width // 6), -max(4, self.rect.height // 6))
         self.pos, self.vel, self.dmg = pygame.Vector2(pos.x, pos.y), vel, dmg
         self.pierce, self.hit_enemies = PROJ_PIERCE, []
         self.ricochet = PROJ_RICOCHET
@@ -672,6 +836,8 @@ class Projectile(pygame.sprite.Sprite):
             self.frame_idx = (self.frame_idx + 1) % len(self.anim_frames)
             self.image = self.anim_frames[self.frame_idx]
         self.rect.center = self.pos + cam
+        self.hitbox = self.rect.inflate(-max(4, self.rect.width // 6), -max(4, self.rect.height // 6))
+        self.hitbox.center = self.rect.center
         if not pygame.Rect(-1000,-1000,SCREEN_W+2000,SCREEN_H+2000).collidepoint(self.rect.center): self.kill()
 
 class MeleeSlash(pygame.sprite.Sprite):
@@ -801,10 +967,10 @@ class Player(pygame.sprite.Sprite):
                 self.ult_active = False
 
         m = pygame.Vector2(0, 0)
-        if keys[pygame.K_w]: m.y -= 1
-        if keys[pygame.K_s]: m.y += 1
-        if keys[pygame.K_a]: m.x -= 1
-        if keys[pygame.K_d]: m.x += 1
+        if is_control_pressed(keys, "up"): m.y -= 1
+        if is_control_pressed(keys, "down"): m.y += 1
+        if is_control_pressed(keys, "left"): m.x -= 1
+        if is_control_pressed(keys, "right"): m.x += 1
         
         moving = m.length_squared() > 0
         if moving:
@@ -1126,6 +1292,51 @@ orb_img = None
 tornado_img = None
 
 
+class ExplosionAnimation:
+    def __init__(self, pos, radius, raw_frames, frame_duration_ms=70):
+        self.pos = pygame.Vector2(pos)
+        self.radius = int(radius)
+        self.frame_duration_ms = frame_duration_ms
+        self.start_ms = pygame.time.get_ticks()
+        self.frame_idx = 0
+        size = (self.radius * 2, self.radius * 2)
+        self.frames = [pygame.transform.scale(f, size) for f in raw_frames]
+        self.image = self.frames[0]
+        self.rect = self.image.get_rect(center=self.pos)
+
+    def update(self, now_ms):
+        elapsed = max(0, now_ms - self.start_ms)
+        self.frame_idx = elapsed // self.frame_duration_ms
+        if self.frame_idx >= len(self.frames):
+            return False
+        self.image = self.frames[self.frame_idx]
+        self.rect = self.image.get_rect(center=self.pos)
+        return True
+
+    def draw(self, screen, cam):
+        draw_rect = self.image.get_rect(center=self.pos + cam)
+        screen.blit(self.image, draw_rect, special_flags=pygame.BLEND_RGBA_ADD)
+
+
+def load_explosion_frames(loader, size=(128, 128)):
+    frames = []
+    for i in range(6):
+        img_name = f"explosion_{i}"
+        img_path = os.path.join(ASSET_DIR, f"{img_name}.png")
+        if os.path.exists(img_path):
+            frames.append(loader.load_image(img_name, size, ((255, 150, 0, 200), (255, 50, 0, 150))))
+
+    if len(frames) == 6:
+        return frames
+
+    return loader.load_animation("explosion", 6, size, fallback_colors=((255, 150, 0, 200), (255, 50, 0, 150)))
+
+
+def projectile_enemy_collision(projectile, enemy):
+    p_rect = getattr(projectile, "hitbox", projectile.rect)
+    return p_rect.colliderect(enemy.rect)
+
+
 def play_sfx(name):
     """Reproduz um efeito sonoro pelo nome, se disponível."""
     global SFX, settings
@@ -1228,10 +1439,11 @@ def apply_upgrade(key, mult=1.0):
     elif key == "TREVO SORTE":   pass  # Efeito passivo em roll_rarity
 
 
-def check_achievements():
+def check_achievements(stats_override=None, save_when_unlocked=False):
     """Verifica e desbloqueia conquistas com base nas estatísticas."""
     global new_unlocks_this_session
-    stats = save_data["stats"]
+    stats = stats_override if stats_override is not None else save_data["stats"]
+    unlocked_any = False
     for ach_id, ach_data in ACHIEVEMENTS.items():
         if ach_id not in save_data["unlocks"]:
             try:
@@ -1239,8 +1451,13 @@ def check_achievements():
                     save_data["unlocks"].append(ach_id)
                     new_unlocks_this_session.append(ach_data["name"])
                     if SFX.get("unlock"): SFX["unlock"].play()
+                    unlocked_any = True
             except Exception:
                 pass
+
+    if unlocked_any and save_when_unlocked:
+        save_game()
+    return unlocked_any
 
 
 def load_all_assets():
@@ -1255,8 +1472,8 @@ def load_all_assets():
     ground_img = loader.load_image(bg_name, (256, 256), ((20, 20, 30), (10, 10, 20)))
     menu_bg_img = loader.load_image("menu_bg", (SCREEN_W, SCREEN_H), ((10, 5, 20), (5, 0, 10)))
     
-    aura_frames = loader.load_animation("aura", 8, (400, 400), fallback_colors=((100, 0, 200, 80), (80, 0, 160, 60)))
-    explosion_frames_raw = loader.load_animation("explosion", 8, (128, 128), fallback_colors=((255, 150, 0, 200), (255, 50, 0, 150)))
+    aura_frames = loader.load_animation("aura", 4, (400, 400), fallback_colors=((100, 0, 200, 80), (80, 0, 160, 60)))
+    explosion_frames_raw = load_explosion_frames(loader, (128, 128))
     projectile_frames_raw = loader.load_animation("projectile", 4, (40, 20), fallback_colors=((255, 255, 100), (200, 200, 0)))
     slash_frames_raw = loader.load_animation("slash", 6, (120, 120), fallback_colors=((255, 255, 200, 180), (200, 200, 150, 120)))
     orb_img = loader.load_image("orb", (50, 50), ((0, 200, 255), (0, 100, 200)))
@@ -1266,6 +1483,7 @@ def load_all_assets():
     for upg_key, icon_name in UPGRADE_ICONS.items():
         upg_images[upg_key] = loader.load_image(icon_name, (64, 64))
     
+    # assets de personagens
     # Animações dos personagens para o menu
     menu_char_anims = []
     for char_id, char_data in CHAR_DATA.items():
@@ -1372,6 +1590,49 @@ def reset_game(char_id=0):
     player = Player(loader, char_id)
 
 
+def clear_current_run_state():
+    """Limpa estado transitório da run atual e retorna ao menu sem contar nova partida."""
+    global player, enemies, projectiles, enemy_projectiles, gems, drops
+    global particles, obstacles, puddles, damage_texts, active_explosions
+    global kills, game_time, level, xp, shot_t, aura_t, aura_anim_timer
+    global aura_frame_idx, orb_rot_angle, spawn_t, bosses_spawned
+    global session_boss_kills, session_max_level, triggered_hordes
+    global player_upgrades, chest_loot, chest_ui_timer, up_options, up_keys, up_rarities
+
+    player = None
+    enemies = pygame.sprite.Group()
+    projectiles = pygame.sprite.Group()
+    enemy_projectiles = pygame.sprite.Group()
+    gems = pygame.sprite.Group()
+    drops = pygame.sprite.Group()
+    particles = pygame.sprite.Group()
+    obstacles = pygame.sprite.Group()
+    puddles = pygame.sprite.Group()
+    damage_texts = pygame.sprite.Group()
+
+    kills = 0
+    game_time = 0.0
+    level = 1
+    xp = 0
+    shot_t = 0.0
+    aura_t = 0.0
+    aura_anim_timer = 0.0
+    aura_frame_idx = 0
+    orb_rot_angle = 0.0
+    spawn_t = 0.0
+    bosses_spawned = 0
+    session_boss_kills = 0
+    session_max_level = 1
+    triggered_hordes = set()
+    player_upgrades = []
+    chest_loot = []
+    chest_ui_timer = 0.0
+    active_explosions = []
+    up_options = []
+    up_keys = []
+    up_rarities = []
+
+
 # =========================================================
 # LÓGICA PRINCIPAL
 # =========================================================
@@ -1397,7 +1658,7 @@ def main():
     global player_upgrades, has_bazuca, has_buraco_negro, has_serras, has_tesla, has_ceifador, has_berserk
     global chest_loot, chest_ui_timer, new_unlocks_this_session, up_options, up_keys, up_rarities, active_explosions
     global ground_img, menu_bg_img, aura_frames, explosion_frames_raw, projectile_frames_raw, slash_frames_raw, orb_img, tornado_img
-    global PROJ_RICOCHET, temp_settings
+    global PROJ_RICOCHET, temp_settings, settings_control_waiting, settings_dragging_slider
 
     # Configuração da tela (Já feita no apply_settings, mas garantindo o caption)
     pygame.display.set_caption("Sobrevivente do Caos")
@@ -1436,13 +1697,21 @@ def main():
     # Criar todos os botões da interface
     # Menu reposicionado para o canto inferior esquerdo conforme imagem
     menu_btns = [
-        Button(0.15, 0.55, 350, 55, "JOGAR",         font_m),
-        Button(0.15, 0.63, 350, 55, "MISSÕES",       font_m),
-        Button(0.15, 0.71, 350, 55, "TALENTOS",      font_m),
-        Button(0.15, 0.79, 350, 55, "BIOMA",         font_m),
-        Button(0.15, 0.87, 350, 55, "CONFIGURAÇÕES", font_m),
-        Button(0.15, 0.95, 350, 55, "SAIR",          font_m, color=(80, 30, 30)),
+        Button(0.15, 0.52, 350, 52, "JOGAR",         font_m),
+        Button(0.15, 0.59, 350, 52, "MISSÕES",       font_m),
+        Button(0.15, 0.66, 350, 52, "TALENTOS",      font_m),
+        Button(0.15, 0.73, 350, 52, "SAVES",         font_m),
+        Button(0.15, 0.80, 350, 52, "BIOMA",         font_m),
+        Button(0.15, 0.87, 350, 52, "CONFIGURAÇÕES", font_m),
+        Button(0.15, 0.94, 350, 52, "SAIR",          font_m, color=(80, 30, 30)),
     ]
+
+    saves_slot_btns = [
+        Button(0.5, 0.35, 560, 60, "SLOT 1", font_m),
+        Button(0.5, 0.47, 560, 60, "SLOT 2", font_m),
+        Button(0.5, 0.59, 560, 60, "SLOT 3", font_m),
+    ]
+    saves_back_btn = Button(0.5, 0.90, 300, 50, "VOLTAR", font_m, color=(80, 30, 30))
 
     mission_btns = [Button(0.5, 0.90, 300, 50, "VOLTAR", font_m, color=(80, 30, 30))]
     mission_claim_btns = [
@@ -1504,6 +1773,12 @@ def main():
         Button(0.5, 0.55, 350, 60, "CONTINUAR", font_m, color=(30, 80, 30)),
         Button(0.5, 0.68, 350, 60, "MENU PRINCIPAL", font_m, color=(80, 30, 30)),
     ]
+    pause_save_btns = [
+        Button(0.70, 0.54, 260, 44, "SALVAR SLOT 1", font_s, color=(35, 80, 35)),
+        Button(0.70, 0.61, 260, 44, "SALVAR SLOT 2", font_s, color=(35, 80, 35)),
+        Button(0.70, 0.68, 260, 44, "SALVAR SLOT 3", font_s, color=(35, 80, 35)),
+    ]
+    game_over_btn = Button(0.5, 0.78, 420, 60, "VOLTAR AO MENU PRINCIPAL", font_m, color=(80, 30, 30))
 
     # Variáveis de estado do jogo
     state = "MENU"
@@ -1514,6 +1789,9 @@ def main():
     shake_strength = 0
     shake_offset = pygame.Vector2(0, 0)
     up_options = []
+    run_gold_collected = 0.0
+    autosave_timer = 0.0
+    pause_save_feedback_timer = 0.0
     
     # Inicializa temp_settings para evitar UnboundLocalError
     temp_settings = json.loads(json.dumps(settings))
@@ -1524,6 +1802,9 @@ def main():
         # 1. Delta Time (dt) com Clamp
         dt_raw = clock.tick(FPS) / 1000.0
         dt = min(dt_raw, 1/30.0) # Evita bugs de física com lag
+
+        if pause_save_feedback_timer > 0:
+            pause_save_feedback_timer = max(0.0, pause_save_feedback_timer - dt_raw)
         
         # Atualiza posição do mouse
         m_pos = pygame.mouse.get_pos()
@@ -1532,6 +1813,8 @@ def main():
         if (SCREEN_W, SCREEN_H) != last_res:
             last_res = (SCREEN_W, SCREEN_H)
             for b in menu_btns: b.update_rect()
+            for b in saves_slot_btns: b.update_rect()
+            saves_back_btn.update_rect()
             for b in mission_btns: b.update_rect()
             for b in mission_claim_btns: b.update_rect()
             shop_back_btn.update_rect()
@@ -1545,6 +1828,8 @@ def main():
             for b in bg_btns: b.update_rect()
             bg_back_btn.update_rect()
             for b in pause_btns: b.update_rect()
+            for b in pause_save_btns: b.update_rect()
+            game_over_btn.update_rect()
             for b in settings_main_btns: b.update_rect()
             for b in settings_action_btns.values(): b.update_rect()
 
@@ -1556,10 +1841,45 @@ def main():
         # 2. Manipulação de Eventos
         for event in pygame.event.get():
             if event.type == pygame.QUIT: 
+                save_run_slot(0)
                 save_game()
                 running = False
             
             if event.type == pygame.KEYDOWN:
+                if state == "SETTINGS" and settings_category == "controls" and settings_control_waiting:
+                    if event.key == pygame.K_ESCAPE:
+                        settings_control_waiting = None
+                    else:
+                        if "controls" not in temp_settings or not isinstance(temp_settings["controls"], dict):
+                            temp_settings["controls"] = _deepcopy_settings(load_settings(force_default=True))["controls"]
+                        if settings_control_waiting in temp_settings["controls"]:
+                            temp_settings["controls"][settings_control_waiting] = pygame.key.name(event.key)
+                            settings = _deepcopy_settings(temp_settings)
+                            save_settings(settings)
+                        settings_control_waiting = None
+                        if snd_click: snd_click.play()
+                    continue
+
+                if state == "UPGRADE":
+                    selected_idx = None
+                    if event.key in [pygame.K_1, pygame.K_KP1]:
+                        selected_idx = 0
+                    elif event.key in [pygame.K_2, pygame.K_KP2]:
+                        selected_idx = 1
+                    elif event.key in [pygame.K_3, pygame.K_KP3]:
+                        selected_idx = 2
+                    elif event.key in [pygame.K_RETURN, pygame.K_KP_ENTER] and len(up_keys) > 0:
+                        selected_idx = 0
+
+                    if selected_idx is not None and selected_idx < len(up_keys):
+                        if snd_click: snd_click.play()
+                        apply_upgrade(up_keys[selected_idx])
+                        up_options = []
+                        up_keys = []
+                        up_rarities = []
+                        state = "PLAYING"
+                        continue
+
                 if event.key == pygame.K_ESCAPE:
                     if state == "PLAYING": state = "PAUSED"
                     elif state == "PAUSED": state = "PLAYING"
@@ -1569,22 +1889,22 @@ def main():
                         else:
                             settings_category = "main"
                             temp_settings = json.loads(json.dumps(settings))
-                    elif state in ["CHAR_SELECT", "MISSIONS", "SHOP", "BG_SELECT"]:
+                    elif state in ["CHAR_SELECT", "MISSIONS", "SHOP", "BG_SELECT", "SAVES"]:
                         state = "MENU"
                     elif state == "DIFF_SELECT":
                         state = "CHAR_SELECT"
                     elif state == "PACT_SELECT":
                         state = "DIFF_SELECT"
                 
-                if event.key == pygame.K_p:
+                if event.key == get_control_key_code("pause"):
                     if state == "PLAYING": state = "PAUSED"
                     elif state == "PAUSED": state = "PLAYING"
                 
-                if event.key == pygame.K_SPACE:
+                if event.key == get_control_key_code("dash"):
                     if state == "PLAYING" and player:
                         if player.start_dash(particles): play_sfx("dash")
                 
-                if event.key == pygame.K_e:
+                if event.key == get_control_key_code("ultimate"):
                     if state == "PLAYING" and player and player.ult_charge >= player.ult_max:
                         player.ult_charge = 0
                         damage_texts.add(DamageText(player.pos, "ULTIMATE!", True, (255, 0, 255)))
@@ -1608,46 +1928,67 @@ def main():
                                 e.frozen_timer = 5.0 
             
             if event.type == pygame.MOUSEBUTTONDOWN:
+                    click_pos = event.pos
+
+                    if state == "SETTINGS":
+                        start_settings_drag(click_pos)
 
                     if state == "MENU":
-                        if menu_btns[0].rect.collidepoint(m_pos): 
+                        if menu_btns[0].rect.collidepoint(click_pos): 
                             state = "CHAR_SELECT"
-                        elif menu_btns[1].rect.collidepoint(m_pos): 
+                        elif menu_btns[1].rect.collidepoint(click_pos): 
                             state = "MISSIONS"
-                        elif menu_btns[2].rect.collidepoint(m_pos): 
+                        elif menu_btns[2].rect.collidepoint(click_pos): 
                             state = "SHOP"
-                        elif menu_btns[3].rect.collidepoint(m_pos):
+                        elif menu_btns[3].rect.collidepoint(click_pos):
+                            if snd_click: snd_click.play()
+                            state = "SAVES"
+                        elif menu_btns[4].rect.collidepoint(click_pos):
                             if snd_click: snd_click.play()
                             state = "BG_SELECT"
-                        elif menu_btns[4].rect.collidepoint(m_pos): 
+                        elif menu_btns[5].rect.collidepoint(click_pos): 
                             if snd_click: snd_click.play()
                             state = "SETTINGS"
                             settings_category = "main"
+                            temp_settings = json.loads(json.dumps(settings))
                             # garante rect certo pro clique
                             for b in settings_main_btns: b.update_rect()
                             for b in settings_action_btns.values(): b.update_rect()
-                        elif menu_btns[5].rect.collidepoint(m_pos): 
+                        elif menu_btns[6].rect.collidepoint(click_pos): 
+                            save_run_slot(0)
                             save_game()
                             running = False
 
+                    elif state == "SAVES":
+                        if saves_back_btn.rect.collidepoint(click_pos):
+                            state = "MENU"
+                        else:
+                            for idx, btn in enumerate(saves_slot_btns):
+                                if btn.rect.collidepoint(click_pos):
+                                    if load_run_slot(idx):
+                                        if snd_click: snd_click.play()
+                                        autosave_timer = 0.0
+                                        state = "PLAYING"
+                                    break
+
                     elif state == "MISSIONS":
-                        if mission_btns[0].rect.collidepoint(m_pos): 
+                        if mission_btns[0].rect.collidepoint(click_pos): 
                             state = "MENU"
                         for i, m in enumerate(save_data["daily_missions"]["active"]):
                             if m["completed"] and not m["claimed"]:
-                                if mission_claim_btns[i].rect.collidepoint(m_pos):
+                                if mission_claim_btns[i].rect.collidepoint(click_pos):
                                     m["claimed"] = True
                                     save_data["gold"] += m["reward"]
                                     play_sfx("win")
                                     save_game()
 
                     elif state == "SHOP":
-                        if shop_back_btn.rect.collidepoint(m_pos):
+                        if shop_back_btn.rect.collidepoint(click_pos):
                             save_game()
                             state = "MENU"
                         else:
                             for p_name, s_key, btn in shop_talent_btns:
-                                if btn.rect.collidepoint(m_pos):
+                                if btn.rect.collidepoint(click_pos):
                                     skill = TALENT_TREE[p_name]["skills"][s_key]
                                     lvl = save_data["perm_upgrades"].get(s_key, 0)
                                     if lvl < skill["max"]:
@@ -1658,41 +1999,54 @@ def main():
                                             if snd_click: snd_click.play()
 
                     elif state == "CHAR_SELECT":
-                        if char_back_btn.rect.collidepoint(m_pos): 
+                        if char_back_btn.rect.collidepoint(click_pos): 
                             state = "MENU"
                         for i, btn in enumerate(char_btns):
-                            if btn.check_hover(m_pos):
+                            if btn.rect.collidepoint(click_pos):
                                 if snd_click: snd_click.play()
                                 reset_game(i)
                                 state = "DIFF_SELECT"
 
                     elif state == "DIFF_SELECT":
-                        if diff_back_btn.rect.collidepoint(m_pos): 
+                        if diff_back_btn.rect.collidepoint(click_pos): 
                             state = "CHAR_SELECT"
                         diff_order = ["FÁCIL", "MÉDIO", "DIFÍCIL", "HARDCORE"]
                         for i, btn in enumerate(diff_btns):
-                            if btn.check_hover(m_pos):
+                            if btn.rect.collidepoint(click_pos):
                                 selected_difficulty = diff_order[i]
                                 if snd_click: snd_click.play()
                                 state = "PACT_SELECT"
 
                     elif state == "PACT_SELECT":
-                        if pact_back_btn.rect.collidepoint(m_pos): 
+                        if pact_back_btn.rect.collidepoint(click_pos): 
                             state = "DIFF_SELECT"
                         pact_names = list(PACTOS.keys())
                         for i, btn in enumerate(pact_btns):
-                            if btn.rect.collidepoint(m_pos):
+                            if btn.rect.collidepoint(click_pos):
                                 selected_pact = pact_names[i]
                                 if snd_click: snd_click.play()
                                 p_data = PACTOS[selected_pact]
                                 reset_game(player.char_id if player else 0)
+                                run_gold_collected = 0.0
+                                autosave_timer = 0.0
                                 if p_data["hp"] > 0: player.hp = p_data["hp"]
                                 state = "PLAYING"
 
+                    elif state == "BG_SELECT":
+                        if bg_back_btn.rect.collidepoint(click_pos):
+                            state = "MENU"
+                        else:
+                            for i, btn in enumerate(bg_btns):
+                                if btn.rect.collidepoint(click_pos):
+                                    selected_bg = bg_choices[i]
+                                    load_all_assets()
+                                    if snd_click: snd_click.play()
+                                    break
+
                     elif state == "SETTINGS":
-                        # categorias
+                        # categorias (sempre clicáveis para facilitar navegação)
                         for btn in settings_main_btns:
-                            if btn.rect.collidepoint(m_pos):
+                            if btn.rect.collidepoint(click_pos):
                                 if snd_click: snd_click.play()
                                 label = btn.text.strip().lower()
                                 if "vídeo" in label or "video" in label:
@@ -1705,21 +2059,27 @@ def main():
                                     settings_category = "gameplay"
                                 elif "acessibilidade" in label:
                                     settings_category = "accessibility"
+                                if settings_category != "main":
+                                    temp_settings = json.loads(json.dumps(settings))
+                                break
 
                         # ações
                         for key, btn in settings_action_btns.items():
-                            if btn.rect.collidepoint(m_pos):
+                            if btn.rect.collidepoint(click_pos):
                                 if snd_click: snd_click.play()
 
                                 if key == "apply":
                                     settings = json.loads(json.dumps(temp_settings))
                                     apply_settings(settings)
+                                    load_all_assets()
                                     save_settings(settings)
 
                                 elif key == "default":
-                                    settings = load_settings(force_default=True)
-                                    temp_settings = json.loads(json.dumps(settings))
+                                    default_settings = load_settings(force_default=True)
+                                    temp_settings = json.loads(json.dumps(default_settings))
+                                    settings = json.loads(json.dumps(default_settings))
                                     apply_settings(settings)
+                                    load_all_assets()
                                     save_settings(settings)
 
                                 elif key == "back":
@@ -1727,17 +2087,78 @@ def main():
                                         settings_category = "main"
                                     else:
                                         state = "MENU"
+                                break
 
-                    elif state == "LEVELUP":
-                        for i, btn in enumerate(up_btns):
-                            if btn.rect.collidepoint(m_pos):
+                        # opções internas da aba ativa
+                        if settings_category == "video":
+                            handle_video_settings_clicks(click_pos)
+                        elif settings_category == "audio":
+                            handle_audio_settings_clicks(click_pos)
+                        elif settings_category == "controls":
+                            handle_controls_settings_clicks(click_pos)
+                        elif settings_category == "gameplay":
+                            handle_gameplay_settings_clicks(click_pos)
+                        elif settings_category == "accessibility":
+                            handle_accessibility_settings_clicks(click_pos)
+
+                    elif state == "GAME_OVER":
+                        if game_over_btn.rect.collidepoint(click_pos):
+                            if snd_click: snd_click.play()
+                            clear_current_run_state()
+                            run_gold_collected = 0.0
+                            state = "MENU"
+
+                    elif state == "UPGRADE":
+                        for i in range(len(up_keys)):
+                            y_pos = SCREEN_H*0.3 + i*150
+                            rect = pygame.Rect(SCREEN_W/2 - 300, y_pos, 600, 120)
+                            if rect.collidepoint(click_pos):
                                 if snd_click: snd_click.play()
-                                chosen = up_options[i]
-                                apply_upgrade(chosen)
+                                apply_upgrade(up_keys[i])
                                 up_options = []
-                                up_btns = []
+                                up_keys = []
+                                up_rarities = []
                                 state = "PLAYING"
                                 break
+
+                    elif state == "CHEST_UI":
+                        auto_apply = settings["gameplay"].get("auto_apply_chest_reward", "On") == "On"
+                        if not auto_apply:
+                            box_w, box_h = 700, 100 + len(chest_loot) * 80
+                            box_rect = pygame.Rect(SCREEN_W/2 - box_w/2, SCREEN_H/2 - box_h/2, box_w, box_h)
+                            for i, loot in enumerate(chest_loot):
+                                line_rect = pygame.Rect(box_rect.left + 20, box_rect.y + 25 + i * 80, box_w - 40, 70)
+                                if line_rect.collidepoint(click_pos):
+                                    apply_upgrade(loot)
+                                    chest_loot = []
+                                    chest_ui_timer = 0.0
+                                    state = "PLAYING"
+                                    if snd_click: snd_click.play()
+                                    break
+
+                    elif state == "PAUSED":
+                        if pause_btns[0].rect.collidepoint(click_pos):
+                            if snd_click: snd_click.play()
+                            state = "PLAYING"
+                        elif pause_btns[1].rect.collidepoint(click_pos):
+                            if snd_click: snd_click.play()
+                            save_run_slot(0)
+                            clear_current_run_state()
+                            run_gold_collected = 0.0
+                            state = "MENU"
+                        else:
+                            for i, s_btn in enumerate(pause_save_btns):
+                                if s_btn.rect.collidepoint(click_pos):
+                                    if snd_click: snd_click.play()
+                                    if save_run_slot(i):
+                                        pause_save_feedback_timer = 2.0
+                                    break
+
+            if event.type == pygame.MOUSEMOTION and state == "SETTINGS":
+                update_settings_drag(event.pos)
+
+            if event.type == pygame.MOUSEBUTTONUP and state == "SETTINGS":
+                stop_settings_drag()
 
                 
 
@@ -1748,15 +2169,20 @@ def main():
 
             keys = pygame.key.get_pressed()
             
+            shake_multiplier = max(0.0, min(1.0, settings["accessibility"].get("screen_shake", 100) / 100.0))
             if shake_timer > 0:
                 shake_timer -= dt
-                shake_offset.x = random.uniform(-shake_strength, shake_strength)
-                shake_offset.y = random.uniform(-shake_strength, shake_strength)
+                shake_offset.x = random.uniform(-shake_strength, shake_strength) * shake_multiplier
+                shake_offset.y = random.uniform(-shake_strength, shake_strength) * shake_multiplier
             else:
                 shake_offset.x = 0
                 shake_offset.y = 0
             
             game_time += dt
+            autosave_timer += dt
+            if autosave_timer >= 15.0:
+                save_run_slot(0)
+                autosave_timer = 0.0
             update_mission_progress("time", dt)
             
             if REGEN_RATE > 0:
@@ -1921,7 +2347,7 @@ def main():
                     damage_texts.add(DamageText(player.pos, "⚠️ CHUVA DE METEOROS! ⚠️", True, (255, 69, 0)))
                     for _ in range(15):
                         m_pos = player.pos + pygame.Vector2(random.randint(-800, 800), random.randint(-800, 800))
-                        active_explosions.append({"pos": m_pos, "frame": 0, "timer": 0, "radius": 250})
+                        active_explosions.append(ExplosionAnimation(m_pos, 250, explosion_frames_raw))
                 elif event_type == "OURO":
                     damage_texts.add(DamageText(player.pos, "💰 CHUVA DE OURO! 💰", True, (255, 215, 0)))
                     for _ in range(20):
@@ -1972,6 +2398,9 @@ def main():
             damage_texts.update(dt, cam)
             particles.update(dt, cam) 
 
+            now_ms = pygame.time.get_ticks()
+            active_explosions = [exp for exp in active_explosions if exp.update(now_ms)]
+
             for p in list(projectiles):
                 is_melee = getattr(p, "is_melee", False)
                 if not is_melee:
@@ -1980,7 +2409,7 @@ def main():
                         if obs.hitbox.collidepoint(p.pos): p.kill(); hit_obs = True; break
                     if hit_obs: continue
                 
-                hits = pygame.sprite.spritecollide(p, enemies, False)
+                hits = pygame.sprite.spritecollide(p, enemies, False, projectile_enemy_collision)
                 for hit in hits:
                     if hit not in p.hit_enemies:
                         dmg_dealt = p.dmg
@@ -2007,7 +2436,7 @@ def main():
                             knock_force = 3.0 
                         
                         if HAS_CHAOS_BOLT and random.random() < 0.15:
-                            active_explosions.append({"pos": hit.pos, "frame": 0, "timer": 0, "radius": 150})
+                            active_explosions.append(ExplosionAnimation(hit.pos, 150, explosion_frames_raw))
                             hit.hp -= PROJECTILE_DMG * 2
 
                         if hit.kind == "boss": knock_force *= 0.1
@@ -2023,7 +2452,7 @@ def main():
                             current_exp_dmg = EXPLOSION_DMG * 3 if has_bazuca else EXPLOSION_DMG
                             
                             exp_pos = pygame.Vector2(p.pos)
-                            active_explosions.append({"pos": exp_pos, "frame": 0, "timer": 0, "radius": current_exp_rad})
+                            active_explosions.append(ExplosionAnimation(exp_pos, current_exp_rad, explosion_frames_raw))
                             play_sfx("explosion") 
                             for e in enemies:
                                 if exp_pos.distance_to(e.pos) < current_exp_rad: 
@@ -2042,13 +2471,18 @@ def main():
                         if hit.hp <= 0: 
                             if player.ult_charge < player.ult_max: player.ult_charge += 1
                             gems.add(Gem(hit.pos, loader)); hit.kill(); kills += 1
+                            save_data["stats"]["total_kills"] += 1
                             update_mission_progress("kills", 1)
                             if hit.kind == "boss":
                                 session_boss_kills += 1
+                                save_data["stats"]["boss_kills"] += 1
                                 update_mission_progress("boss", 1)
                                 drops.add(Drop(hit.pos, "chest", loader))
                             elif random.random() < DROP_CHANCE:
                                 drops.add(Drop(hit.pos, "coin", loader))
+
+                            # Salva imediatamente ao desbloquear metas de personagem (Caçador/Mago).
+                            check_achievements(save_when_unlocked=True)
                         
                         # Lógica de Ricochete e Perfuração (Apenas para Projéteis)
                         if not is_melee:
@@ -2091,14 +2525,26 @@ def main():
             for d in list(drops):
                 if d.rect.colliderect(player.rect):
                     if d.kind == "coin":
-                        save_data["gold"] += 50 * DIFFICULTIES[selected_difficulty]["gold_mult"]
-                        update_mission_progress("gold", 50 * DIFFICULTIES[selected_difficulty]["gold_mult"])
+                        coin_value = 50 * DIFFICULTIES[selected_difficulty]["gold_mult"]
+                        run_gold_collected += coin_value
+                        save_data["gold"] += coin_value
+                        update_mission_progress("gold", coin_value)
                         play_sfx("drop")
                         d.kill()
                     elif d.kind == "chest":
+                        auto_pickup = settings["gameplay"].get("auto_pickup_chest", "On") == "On"
+                        if not auto_pickup and not is_control_pressed(keys, "dash"):
+                            continue
+
                         chest_loot = pick_upgrades_with_synergy(list(UPGRADE_POOL.keys()), player_upgrades, k=3)
-                        state = "CHEST_UI"
-                        chest_ui_timer = 5.0
+                        auto_apply = settings["gameplay"].get("auto_apply_chest_reward", "On") == "On"
+                        if auto_apply:
+                            for loot in chest_loot:
+                                apply_upgrade(loot)
+                            chest_loot = []
+                        else:
+                            state = "CHEST_UI"
+                            chest_ui_timer = 5.0
                         d.kill()
 
             for p in list(puddles):
@@ -2125,21 +2571,22 @@ def main():
             if player.hp <= 0:
                 play_sfx("lose")
                 state = "GAME_OVER"
+                save_run_slot(0)
                 save_data["stats"]["deaths"] += 1
                 save_data["stats"]["total_time"] += game_time
-                save_data["stats"]["total_kills"] += kills
-                save_data["stats"]["boss_kills"] += session_boss_kills
                 save_data["stats"]["max_level_reached"] = max(save_data["stats"]["max_level_reached"], session_max_level)
                 check_achievements()
                 save_game()
 
         elif state == "CHEST_UI":
-            chest_ui_timer -= dt
-            if chest_ui_timer <= 0:
-                for loot in chest_loot:
-                    apply_upgrade(loot)
-                chest_loot = []
-                state = "PLAYING"
+            auto_apply = settings["gameplay"].get("auto_apply_chest_reward", "On") == "On"
+            if auto_apply:
+                chest_ui_timer -= dt
+                if chest_ui_timer <= 0:
+                    for loot in chest_loot:
+                        apply_upgrade(loot)
+                    chest_loot = []
+                    state = "PLAYING"
 
         # 4. Desenho na Tela
         screen.fill((0, 0, 0))
@@ -2150,14 +2597,40 @@ def main():
             # O título já faz parte da imagem de fundo (Underworld Hero)
             for b in menu_btns: b.check_hover(m_pos, snd_hover); b.draw(screen)
 
+        elif state == "SAVES":
+            screen.blit(menu_bg_img, (0,0))
+            overlay = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA); overlay.fill((0, 0, 0, 180)); screen.blit(overlay, (0, 0))
+            t = font_l.render("SAVES / PROGRESSO", True, (255, 255, 255))
+            screen.blit(t, t.get_rect(center=(SCREEN_W//2, SCREEN_H*0.14)))
+
+            for idx, btn in enumerate(saves_slot_btns):
+                slot_path = get_run_slot_path(idx)
+                slot_exists = os.path.exists(slot_path)
+                btn.text = f"SLOT {idx + 1} - {'DISPONÍVEL' if slot_exists else 'VAZIO'}"
+                btn.color = (40, 90, 40) if slot_exists else (60, 60, 70)
+                btn.check_hover(m_pos, snd_hover)
+                btn.draw(screen)
+
+            saves_back_btn.check_hover(m_pos, snd_hover)
+            saves_back_btn.draw(screen)
+
         elif state == "MISSIONS":
             screen.blit(menu_bg_img, (0,0))
             overlay = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA); overlay.fill((0, 0, 0, 180)); screen.blit(overlay, (0, 0))
             t = font_l.render("MISSÕES DIÁRIAS", True, (255, 215, 0))
             screen.blit(t, t.get_rect(center=(SCREEN_W//2, SCREEN_H*0.12)))
+
+            now_dt = datetime.now()
+            next_reset = (now_dt + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            remaining = max(0, int((next_reset - now_dt).total_seconds()))
+            rem_h = remaining // 3600
+            rem_m = (remaining % 3600) // 60
+            rem_s = remaining % 60
+            timer_txt = font_s.render(f"RESET EM: {rem_h:02}:{rem_m:02}:{rem_s:02}", True, (255, 240, 140))
+            screen.blit(timer_txt, timer_txt.get_rect(center=(SCREEN_W//2, SCREEN_H*0.18)))
             
             for i, m in enumerate(save_data["daily_missions"]["active"]):
-                y_base = SCREEN_H * 0.25 + i * 120
+                y_base = SCREEN_H * 0.29 + i * 120
                 box_rect = pygame.Rect(SCREEN_W/2 - 300, y_base, 600, 100)
                 pygame.draw.rect(screen, (30, 30, 50, 200), box_rect, border_radius=10)
                 pygame.draw.rect(screen, (100, 100, 255), box_rect, 2, border_radius=10)
@@ -2322,39 +2795,42 @@ def main():
                     pygame.draw.rect(screen, (0, 255, 0), (bar_x, bar_y, int(bar_w * ratio), bar_h))
                     pygame.draw.rect(screen, (0, 0, 0), (bar_x, bar_y, bar_w, bar_h), 1)
 
-            for e in enemies:
-                if e.kind == "boss":
-                    if not screen.get_rect().colliderect(e.rect):
-                        center = pygame.Vector2(SCREEN_W//2, SCREEN_H//2)
-                        target = pygame.Vector2(e.rect.center)
-                        direction = target - center
-                        if direction.length() > 0: direction = direction.normalize()
-                        margin = 40
-                        arrow_pos = center + direction * (min(SCREEN_W, SCREEN_H)//2 - margin)
-                        arrow_pos.x = max(margin, min(SCREEN_W - margin, arrow_pos.x))
-                        arrow_pos.y = max(margin, min(SCREEN_H - margin, arrow_pos.y))
-                        angle = math.atan2(direction.y, direction.x)
-                        p1 = arrow_pos + pygame.Vector2(math.cos(angle), math.sin(angle)) * 20
-                        p2 = arrow_pos + pygame.Vector2(math.cos(angle + 2.5), math.sin(angle + 2.5)) * 15
-                        p3 = arrow_pos + pygame.Vector2(math.cos(angle - 2.5), math.sin(angle - 2.5)) * 15
-                        pygame.draw.polygon(screen, (255, 0, 0), [p1, p2, p3])
+            show_offscreen_arrows = settings["gameplay"].get("show_offscreen_arrows", "On") == "On"
+            if show_offscreen_arrows:
+                for e in enemies:
+                    if e.kind != "boss" or screen.get_rect().colliderect(e.rect):
+                        continue
+                    center = pygame.Vector2(SCREEN_W//2, SCREEN_H//2)
+                    target = pygame.Vector2(e.rect.center)
+                    direction = target - center
+                    if direction.length() > 0: direction = direction.normalize()
+                    margin = 40
+                    arrow_pos = center + direction * (min(SCREEN_W, SCREEN_H)//2 - margin)
+                    arrow_pos.x = max(margin, min(SCREEN_W - margin, arrow_pos.x))
+                    arrow_pos.y = max(margin, min(SCREEN_H - margin, arrow_pos.y))
+                    angle = math.atan2(direction.y, direction.x)
+                    p1 = arrow_pos + pygame.Vector2(math.cos(angle), math.sin(angle)) * 20
+                    p2 = arrow_pos + pygame.Vector2(math.cos(angle + 2.5), math.sin(angle + 2.5)) * 15
+                    p3 = arrow_pos + pygame.Vector2(math.cos(angle - 2.5), math.sin(angle - 2.5)) * 15
+                    pygame.draw.polygon(screen, (255, 0, 0), [p1, p2, p3])
                         
-            for d in drops:
-                if d.kind == "chest":
-                    if not screen.get_rect().colliderect(d.rect):
-                        center = pygame.Vector2(SCREEN_W//2, SCREEN_H//2)
-                        target = pygame.Vector2(d.rect.center)
-                        direction = target - center
-                        if direction.length() > 0: direction = direction.normalize()
-                        margin = 40
-                        arrow_pos = center + direction * (min(SCREEN_W, SCREEN_H)//2 - margin)
-                        arrow_pos.x = max(margin, min(SCREEN_W - margin, arrow_pos.x))
-                        arrow_pos.y = max(margin, min(SCREEN_H - margin, arrow_pos.y))
-                        angle = math.atan2(direction.y, direction.x)
-                        p1 = arrow_pos + pygame.Vector2(math.cos(angle), math.sin(angle)) * 20
-                        p2 = arrow_pos + pygame.Vector2(math.cos(angle + 2.5), math.sin(angle + 2.5)) * 15
-                        p3 = arrow_pos + pygame.Vector2(math.cos(angle - 2.5), math.sin(angle - 2.5)) * 15
-                        pygame.draw.polygon(screen, (255, 215, 0), [p1, p2, p3])
+            if show_offscreen_arrows:
+                for d in drops:
+                    if d.kind != "chest" or screen.get_rect().colliderect(d.rect):
+                        continue
+                    center = pygame.Vector2(SCREEN_W//2, SCREEN_H//2)
+                    target = pygame.Vector2(d.rect.center)
+                    direction = target - center
+                    if direction.length() > 0: direction = direction.normalize()
+                    margin = 40
+                    arrow_pos = center + direction * (min(SCREEN_W, SCREEN_H)//2 - margin)
+                    arrow_pos.x = max(margin, min(SCREEN_W - margin, arrow_pos.x))
+                    arrow_pos.y = max(margin, min(SCREEN_H - margin, arrow_pos.y))
+                    angle = math.atan2(direction.y, direction.x)
+                    p1 = arrow_pos + pygame.Vector2(math.cos(angle), math.sin(angle)) * 20
+                    p2 = arrow_pos + pygame.Vector2(math.cos(angle + 2.5), math.sin(angle + 2.5)) * 15
+                    p3 = arrow_pos + pygame.Vector2(math.cos(angle - 2.5), math.sin(angle - 2.5)) * 15
+                    pygame.draw.polygon(screen, (255, 215, 0), [p1, p2, p3])
 
             particles.draw(screen)
             damage_texts.draw(screen) 
@@ -2388,36 +2864,39 @@ def main():
                 screen.blit(img, img.get_rect(center=(SCREEN_W//2, SCREEN_H//2)), special_flags=pygame.BLEND_RGBA_ADD)
 
             for exp in active_explosions:
-                if not hasattr(main, "_exp_cache"): main._exp_cache = {}
-                if exp["radius"] not in main._exp_cache:
-                    main._exp_cache[exp["radius"]] = [pygame.transform.scale(f, (exp["radius"]*2, exp["radius"]*2)) for f in explosion_frames_raw]
-                
-                exp_frames = main._exp_cache[exp["radius"]]
-                img = exp_frames[exp["frame"]]
-                screen.blit(img, img.get_rect(center=exp["pos"] + cam), special_flags=pygame.BLEND_RGBA_ADD)
+                exp.draw(screen, cam)
 
             screen.blit(player.image, player.rect)
 
             # HUD Minimalista e Compacta
-            hud_scale = 0.6 # Reduzido para 60% do original
+            ui_multiplier = max(0.6, min(1.0, settings["accessibility"].get("ui_size", 100) / 100.0))
+            hud_scale = 0.6 * ui_multiplier
+            high_contrast = settings["accessibility"].get("high_contrast", "Off") == "On"
             
             # Barra de Vida (Canto Superior Esquerdo) - Mais fina e compacta
             bar_w, bar_h = int(200 * hud_scale), int(18 * hud_scale)
-            pygame.draw.rect(screen, (10, 10, 10), (10, 10, bar_w, bar_h), border_radius=3)
-            pygame.draw.rect(screen, (200, 30, 30), (10, 10, int(bar_w * (player.hp/PLAYER_MAX_HP)), bar_h), border_radius=3)
-            hp_text = font_s.render(f"{int(player.hp)}", True, (255,255,255))
+            hp_bg = (0, 0, 0) if high_contrast else (10, 10, 10)
+            hp_fg = (255, 40, 40) if high_contrast else (200, 30, 30)
+            hp_tc = (255, 255, 0) if high_contrast else (255, 255, 255)
+            pygame.draw.rect(screen, hp_bg, (10, 10, bar_w, bar_h), border_radius=3)
+            pygame.draw.rect(screen, hp_fg, (10, 10, int(bar_w * (player.hp/PLAYER_MAX_HP)), bar_h), border_radius=3)
+            hp_text = font_s.render(f"{int(player.hp)}", True, hp_tc)
             screen.blit(hp_text, (10 + bar_w + 5, 8))
 
             # Barra de XP (Topo da tela, ultra fina)
             xp_bar_h = 4
-            pygame.draw.rect(screen, (20, 20, 20), (0, 0, SCREEN_W, xp_bar_h))
-            pygame.draw.rect(screen, (0, 180, 255), (0, 0, int(SCREEN_W * (xp/current_xp_to_level)), xp_bar_h))
-            level_text = font_s.render(f"L{level}", True, (200, 200, 200))
+            xp_bg = (0, 0, 0) if high_contrast else (20, 20, 20)
+            xp_fg = (0, 255, 255) if high_contrast else (0, 180, 255)
+            level_col = (255, 255, 0) if high_contrast else (200, 200, 200)
+            pygame.draw.rect(screen, xp_bg, (0, 0, SCREEN_W, xp_bar_h))
+            pygame.draw.rect(screen, xp_fg, (0, 0, int(SCREEN_W * (xp/current_xp_to_level)), xp_bar_h))
+            level_text = font_s.render(f"L{level}", True, level_col)
             screen.blit(level_text, (SCREEN_W - 40, 5))
 
             # Cronômetro e Kills (Centro Superior) - Compactados
             time_m, time_s = divmod(int(game_time), 60)
-            time_text = font_s.render(f"{time_m:02}:{time_s:02} | KILLS: {kills}", True, (255,255,255))
+            time_col = (255, 255, 0) if high_contrast else (255, 255, 255)
+            time_text = font_s.render(f"{time_m:02}:{time_s:02} | KILLS: {kills}", True, time_col)
             time_rect = time_text.get_rect(midtop=(SCREEN_W//2, 8))
             pygame.draw.rect(screen, (0,0,0,100), time_rect.inflate(15, 4), border_radius=5)
             screen.blit(time_text, time_rect)
@@ -2498,7 +2977,12 @@ def main():
                 screen.blit(auto_txt, auto_txt.get_rect(center=(SCREEN_W//2, box_rect.bottom + 40)))
 
                 timer_txt = font_s.render(f"Voltando em {max(0, chest_ui_timer):.1f}s...", True, (120, 120, 120))
-                screen.blit(timer_txt, timer_txt.get_rect(center=(SCREEN_W//2, box_rect.bottom + 75)))
+                auto_apply = settings["gameplay"].get("auto_apply_chest_reward", "On") == "On"
+                if auto_apply:
+                    screen.blit(timer_txt, timer_txt.get_rect(center=(SCREEN_W//2, box_rect.bottom + 75)))
+                else:
+                    click_txt = font_s.render("CLIQUE EM UMA OPÇÃO PARA APLICAR", True, (255, 220, 120))
+                    screen.blit(click_txt, click_txt.get_rect(center=(SCREEN_W//2, box_rect.bottom + 75)))
 
             if state == "PAUSED":
                 overlay = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
@@ -2541,6 +3025,13 @@ def main():
                 for b in pause_btns: 
                         b.check_hover(m_pos, snd_hover)
                         b.draw(screen)
+                for b in pause_save_btns:
+                    b.check_hover(m_pos, snd_hover)
+                    b.draw(screen)
+                if pause_save_feedback_timer > 0:
+                    saved_txt = font_s.render("SLOT SALVO COM SUCESSO", True, (120, 255, 120))
+                    saved_rect = saved_txt.get_rect(center=(int(SCREEN_W * 0.70), int(SCREEN_H * 0.76)))
+                    screen.blit(saved_txt, saved_rect)
 
             if state == "GAME_OVER":
                 overlay = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA); overlay.fill((150,0,0,150)); screen.blit(overlay, (0,0))
@@ -2549,6 +3040,10 @@ def main():
                 seconds = int(game_time % 60)
                 time_msg = font_m.render(f"TEMPO SOBREVIVIDO: {minutes:02}:{seconds:02}", True, (255, 215, 0))
                 screen.blit(time_msg, (SCREEN_W//2 - time_msg.get_width()//2, SCREEN_H//2 + 50))
+                gold_run_msg = font_m.render(f"GOLD COLETADO: {int(run_gold_collected)}", True, (255, 255, 120))
+                screen.blit(gold_run_msg, (SCREEN_W//2 - gold_run_msg.get_width()//2, SCREEN_H//2 + 105))
+                game_over_btn.check_hover(m_pos, snd_hover)
+                game_over_btn.draw(screen)
                 
                 if new_unlocks_this_session:
                     ul_title = font_s.render("NOVAS CONQUISTAS:", True, (0, 255, 0))
@@ -2573,6 +3068,8 @@ def main():
 # --- Variáveis do Menu de Configurações ---
 settings_category = "main"  # 'main', 'video', 'audio', 'controls', 'gameplay', 'accessibility'
 temp_settings = {}
+settings_control_waiting = None
+settings_dragging_slider = None
 
 # --- Fontes temporárias para criação dos botões de configurações (fora do main) ---
 # Esses botões são criados no escopo global; as fontes serão recriadas dentro do main().
@@ -2636,10 +3133,15 @@ def draw_video_settings(screen, temp_settings, m_pos, font_m, font_s):
         draw_setting_option(screen, y_pos, label, value, font_m, font_s, m_pos)
 
 def draw_setting_option(screen, y_pos, label, value, font_m, font_s, m_pos):
-    label_text = font_m.render(label, True, (255, 255, 255))
-    screen.blit(label_text, (SCREEN_W * 0.2, y_pos))
+    row_rect = pygame.Rect(int(SCREEN_W * 0.16), int(y_pos), int(SCREEN_W * 0.68), 54)
+    pygame.draw.rect(screen, (22, 22, 30, 210), row_rect, border_radius=10)
+    pygame.draw.rect(screen, (80, 90, 120), row_rect, 2, border_radius=10)
 
-    value_rect = pygame.Rect(SCREEN_W * 0.6, y_pos, 250, 50)
+    label_text = font_m.render(label, True, (240, 240, 240))
+    label_rect = label_text.get_rect(midleft=(row_rect.x + 20, row_rect.centery))
+    screen.blit(label_text, label_rect)
+
+    value_rect = pygame.Rect(row_rect.right - 280, row_rect.y + 4, 260, row_rect.height - 8)
     is_hovered = value_rect.collidepoint(m_pos)
     
     color = (80, 80, 120) if is_hovered else (50, 50, 70)
@@ -2667,18 +3169,24 @@ def draw_audio_settings(screen, temp_settings, m_pos, font_m, font_s):
             draw_setting_option(screen, y_pos, label, value, font_m, font_s, m_pos)
 
 def draw_slider_option(screen, y_pos, label, value, font_m, font_s, m_pos):
-    label_text = font_m.render(label, True, (255, 255, 255))
-    screen.blit(label_text, (SCREEN_W * 0.2, y_pos))
+    row_rect = pygame.Rect(int(SCREEN_W * 0.16), int(y_pos), int(SCREEN_W * 0.68), 54)
+    pygame.draw.rect(screen, (22, 22, 30, 210), row_rect, border_radius=10)
+    pygame.draw.rect(screen, (80, 90, 120), row_rect, 2, border_radius=10)
 
-    slider_rect = pygame.Rect(SCREEN_W * 0.5, y_pos + 15, 300, 20)
-    pygame.draw.rect(screen, (50, 50, 70), slider_rect, border_radius=5)
+    label_text = font_m.render(label, True, (240, 240, 240))
+    label_rect = label_text.get_rect(midleft=(row_rect.x + 20, row_rect.centery))
+    screen.blit(label_text, label_rect)
+
+    slider_rect = pygame.Rect(row_rect.right - 340, row_rect.y + 17, 240, 20)
+    pygame.draw.rect(screen, (35, 35, 50), slider_rect, border_radius=5)
     
     handle_pos = slider_rect.x + int((value / 100) * slider_rect.width)
-    pygame.draw.rect(screen, (0, 255, 0), (slider_rect.x, slider_rect.y, handle_pos - slider_rect.x, slider_rect.height), border_radius=5)
+    pygame.draw.rect(screen, (0, 220, 120), (slider_rect.x, slider_rect.y, max(0, handle_pos - slider_rect.x), slider_rect.height), border_radius=5)
     pygame.draw.circle(screen, (255, 255, 255), (handle_pos, slider_rect.centery), 15)
 
     value_text = font_s.render(f"{value}%", True, (255, 255, 0))
-    screen.blit(value_text, (slider_rect.right + 20, y_pos))
+    value_rect = value_text.get_rect(midleft=(slider_rect.right + 14, slider_rect.centery))
+    screen.blit(value_text, value_rect)
 
     return slider_rect
 
@@ -2768,26 +3276,42 @@ def handle_settings_clicks(m_pos):
             handle_accessibility_settings_clicks(m_pos)
 
 def draw_controls_settings(screen, temp_settings, m_pos, font_m, font_s):
+    if "controls" not in temp_settings or not isinstance(temp_settings["controls"], dict):
+        temp_settings["controls"] = _deepcopy_settings(load_settings(force_default=True))["controls"]
+
+    control_labels = {
+        "up": "Cima",
+        "down": "Baixo",
+        "left": "Esquerda",
+        "right": "Direita",
+        "dash": "Dash",
+        "ultimate": "Ultimate",
+        "pause": "Pause"
+    }
+
     options = [
-        ("Cima", temp_settings["controls"]["up"]),
-        ("Baixo", temp_settings["controls"]["down"]),
-        ("Esquerda", temp_settings["controls"]["left"]),
-        ("Direita", temp_settings["controls"]["right"]),
-        ("Dash", temp_settings["controls"]["dash"]),
-        ("Ultimate", temp_settings["controls"]["ultimate"]),
-        ("Pause", temp_settings["controls"]["pause"])
+        ("up", temp_settings["controls"]["up"]),
+        ("down", temp_settings["controls"]["down"]),
+        ("left", temp_settings["controls"]["left"]),
+        ("right", temp_settings["controls"]["right"]),
+        ("dash", temp_settings["controls"]["dash"]),
+        ("ultimate", temp_settings["controls"]["ultimate"]),
+        ("pause", temp_settings["controls"]["pause"])
     ]
 
-    for i, (label, value) in enumerate(options):
+    for i, (key_name, value) in enumerate(options):
         y_pos = SCREEN_H * 0.2 + i * 60
-        draw_setting_option(screen, y_pos, label, value.upper(), font_m, font_s, m_pos)
+        display_value = value.upper()
+        if settings_control_waiting == key_name:
+            display_value = "PRESSIONE UMA TECLA..."
+        draw_setting_option(screen, y_pos, control_labels[key_name], display_value, font_m, font_s, m_pos)
 
     reset_btn = Button(0.5, 0.8, 300, 50, "Resetar para Padrão", font_m, color=(120, 60, 60))
     reset_btn.check_hover(m_pos, snd_hover)
     reset_btn.draw(screen)
 
 def handle_audio_settings_clicks(m_pos):
-    global temp_settings
+    global temp_settings, settings
     options = {
         "Música": {"key": "music", "values": list(range(0, 101, 10))},
         "SFX": {"key": "sfx", "values": list(range(0, 101, 10))},
@@ -2801,17 +3325,25 @@ def handle_audio_settings_clicks(m_pos):
         values = data["values"]
 
         if label in ["Música", "SFX"]:
-            slider_rect = pygame.Rect(SCREEN_W * 0.5, y_pos + 15, 300, 20)
+            row_rect = pygame.Rect(int(SCREEN_W * 0.16), int(y_pos), int(SCREEN_W * 0.68), 54)
+            slider_rect = pygame.Rect(row_rect.right - 340, row_rect.y + 17, 240, 20)
             if slider_rect.collidepoint(m_pos) and pygame.mouse.get_pressed()[0]:
                 new_value = int(((m_pos[0] - slider_rect.x) / slider_rect.width) * 100)
                 temp_settings["audio"][key] = max(0, min(100, new_value))
+                settings = _deepcopy_settings(temp_settings)
+                save_settings(settings)
+                apply_audio_runtime(settings)
         else:
-            option_rect = pygame.Rect(SCREEN_W * 0.6, y_pos, 250, 50)
+            row_rect = pygame.Rect(int(SCREEN_W * 0.16), int(y_pos), int(SCREEN_W * 0.68), 54)
+            option_rect = pygame.Rect(row_rect.right - 280, row_rect.y + 4, 260, row_rect.height - 8)
             if option_rect.collidepoint(m_pos):
                 current_value = temp_settings["audio"][key]
                 current_index = values.index(str(current_value))
                 new_index = (current_index + 1) % len(values)
                 temp_settings["audio"][key] = values[new_index]
+                settings = _deepcopy_settings(temp_settings)
+                save_settings(settings)
+                apply_audio_runtime(settings)
 
 def draw_gameplay_settings(screen, temp_settings, m_pos, font_m, font_s):
     options = [
@@ -2825,7 +3357,26 @@ def draw_gameplay_settings(screen, temp_settings, m_pos, font_m, font_s):
         draw_setting_option(screen, y_pos, label, value, font_m, font_s, m_pos)
 
 def handle_controls_settings_clicks(m_pos):
-    global temp_settings
+    global temp_settings, settings_control_waiting, settings
+    if "controls" not in temp_settings or not isinstance(temp_settings["controls"], dict):
+        temp_settings["controls"] = _deepcopy_settings(load_settings(force_default=True))["controls"]
+
+    control_rows = [
+        ("up", SCREEN_H * 0.2 + 0 * 60),
+        ("down", SCREEN_H * 0.2 + 1 * 60),
+        ("left", SCREEN_H * 0.2 + 2 * 60),
+        ("right", SCREEN_H * 0.2 + 3 * 60),
+        ("dash", SCREEN_H * 0.2 + 4 * 60),
+        ("ultimate", SCREEN_H * 0.2 + 5 * 60),
+        ("pause", SCREEN_H * 0.2 + 6 * 60),
+    ]
+
+    for action_name, y_pos in control_rows:
+        value_rect = pygame.Rect(int(SCREEN_W * 0.16) + int(SCREEN_W * 0.68) - 280, int(y_pos) + 4, 260, 46)
+        if value_rect.collidepoint(m_pos):
+            settings_control_waiting = action_name
+            return
+
     reset_btn_rect = pygame.Rect(SCREEN_W * 0.5 - 150, SCREEN_H * 0.8 - 25, 300, 50)
     if reset_btn_rect.collidepoint(m_pos):
         default_controls = {
@@ -2833,6 +3384,9 @@ def handle_controls_settings_clicks(m_pos):
             "dash": "space", "ultimate": "e", "pause": "p"
         }
         temp_settings["controls"] = default_controls
+        settings = _deepcopy_settings(temp_settings)
+        save_settings(settings)
+        settings_control_waiting = None
 
 def draw_accessibility_settings(screen, temp_settings, m_pos, font_m, font_s):
     options = [
@@ -2849,7 +3403,7 @@ def draw_accessibility_settings(screen, temp_settings, m_pos, font_m, font_s):
             draw_setting_option(screen, y_pos, label, value, font_m, font_s, m_pos)
 
 def handle_gameplay_settings_clicks(m_pos):
-    global temp_settings
+    global temp_settings, settings
     options = {
         "Auto Coleta de Baú": {"key": "auto_pickup_chest", "values": ["Off", "On"]},
         "Auto Aplicar Recompensa": {"key": "auto_apply_chest_reward", "values": ["Off", "On"]},
@@ -2860,7 +3414,8 @@ def handle_gameplay_settings_clicks(m_pos):
     y_pos_start = SCREEN_H * 0.25
     for i, (label, data) in enumerate(options.items()):
         y_pos = y_pos_start + i * 70
-        option_rect = pygame.Rect(SCREEN_W * 0.6, y_pos, 250, 50)
+        row_rect = pygame.Rect(int(SCREEN_W * 0.16), int(y_pos), int(SCREEN_W * 0.68), 54)
+        option_rect = pygame.Rect(row_rect.right - 280, row_rect.y + 4, 260, row_rect.height - 8)
         if option_rect.collidepoint(m_pos):
             key = data["key"]
             values = data["values"]
@@ -2868,12 +3423,14 @@ def handle_gameplay_settings_clicks(m_pos):
             current_index = values.index(str(current_value))
             new_index = (current_index + 1) % len(values)
             temp_settings["gameplay"][key] = values[new_index]
+            settings = _deepcopy_settings(temp_settings)
+            save_settings(settings)
 
 def handle_accessibility_settings_clicks(m_pos):
-    global temp_settings
+    global temp_settings, settings
     options = {
         "Screen Shake": {"key": "screen_shake", "values": list(range(0, 101, 10))},
-        "Tamanho da UI": {"key": "ui_size", "values": [80, 100, 120]},
+        "Tamanho da UI": {"key": "ui_size", "values": [60, 80, 100]},
         "Alto Contraste": {"key": "high_contrast", "values": ["Off", "On"]}
     }
 
@@ -2884,30 +3441,30 @@ def handle_accessibility_settings_clicks(m_pos):
         values = data["values"]
 
         if label in ["Screen Shake", "Tamanho da UI"]:
-            slider_rect = pygame.Rect(SCREEN_W * 0.5, y_pos + 15, 300, 20)
+            row_rect = pygame.Rect(int(SCREEN_W * 0.16), int(y_pos), int(SCREEN_W * 0.68), 54)
+            slider_rect = pygame.Rect(row_rect.right - 340, row_rect.y + 17, 240, 20)
             if slider_rect.collidepoint(m_pos) and pygame.mouse.get_pressed()[0]:
                 if label == "Screen Shake":
                     new_value = int(((m_pos[0] - slider_rect.x) / slider_rect.width) * 100)
                     temp_settings["accessibility"][key] = max(0, min(100, new_value))
                 else: # Tamanho da UI
-                    # Este slider é mais como um seletor de 3 pontos
-                    click_ratio = (m_pos[0] - slider_rect.x) / slider_rect.width
-                    if click_ratio < 0.33:
-                        temp_settings["accessibility"][key] = 80
-                    elif click_ratio < 0.66:
-                        temp_settings["accessibility"][key] = 100
-                    else:
-                        temp_settings["accessibility"][key] = 120
+                    new_value = int(60 + ((m_pos[0] - slider_rect.x) / slider_rect.width) * 40)
+                    temp_settings["accessibility"][key] = max(60, min(100, new_value))
+                settings = _deepcopy_settings(temp_settings)
+                save_settings(settings)
         else:
-            option_rect = pygame.Rect(SCREEN_W * 0.6, y_pos, 250, 50)
+            row_rect = pygame.Rect(int(SCREEN_W * 0.16), int(y_pos), int(SCREEN_W * 0.68), 54)
+            option_rect = pygame.Rect(row_rect.right - 280, row_rect.y + 4, 260, row_rect.height - 8)
             if option_rect.collidepoint(m_pos):
                 current_value = temp_settings["accessibility"][key]
                 current_index = values.index(str(current_value))
                 new_index = (current_index + 1) % len(values)
                 temp_settings["accessibility"][key] = values[new_index]
+                settings = _deepcopy_settings(temp_settings)
+                save_settings(settings)
 
 def handle_video_settings_clicks(m_pos):
-    global temp_settings
+    global temp_settings, settings
     options = {
         "Resolução": {"key": "resolution", "values": ["1280x720", "1920x1080"]},
         "Tela cheia": {"key": "fullscreen", "values": ["Off", "On"]},
@@ -2919,7 +3476,8 @@ def handle_video_settings_clicks(m_pos):
     y_pos_start = SCREEN_H * 0.25
     for i, (label, data) in enumerate(options.items()):
         y_pos = y_pos_start + i * 70
-        option_rect = pygame.Rect(SCREEN_W * 0.6, y_pos, 250, 50)
+        row_rect = pygame.Rect(int(SCREEN_W * 0.16), int(y_pos), int(SCREEN_W * 0.68), 54)
+        option_rect = pygame.Rect(row_rect.right - 280, row_rect.y + 4, 260, row_rect.height - 8)
         if option_rect.collidepoint(m_pos):
             key = data["key"]
             values = data["values"]
@@ -2932,6 +3490,63 @@ def handle_video_settings_clicks(m_pos):
                 new_value = int(new_value)
 
             temp_settings["video"][key] = new_value
+            settings = _deepcopy_settings(temp_settings)
+            save_settings(settings)
+
+
+def _slider_rect_for_category(category, key, y_pos):
+    row_rect = pygame.Rect(int(SCREEN_W * 0.16), int(y_pos), int(SCREEN_W * 0.68), 54)
+    if category == "audio" and key in ["music", "sfx"]:
+        return pygame.Rect(row_rect.right - 340, row_rect.y + 17, 240, 20)
+    if category == "accessibility" and key in ["screen_shake", "ui_size"]:
+        return pygame.Rect(row_rect.right - 340, row_rect.y + 17, 240, 20)
+    return None
+
+
+def start_settings_drag(click_pos):
+    global settings_dragging_slider
+    settings_dragging_slider = None
+
+    rows = []
+    if settings_category == "audio":
+        rows = [("music", SCREEN_H * 0.25 + 0 * 70), ("sfx", SCREEN_H * 0.25 + 1 * 70)]
+    elif settings_category == "accessibility":
+        rows = [("screen_shake", SCREEN_H * 0.25 + 0 * 70), ("ui_size", SCREEN_H * 0.25 + 1 * 70)]
+
+    for key, y_pos in rows:
+        s_rect = _slider_rect_for_category(settings_category, key, y_pos)
+        if s_rect and s_rect.collidepoint(click_pos):
+            settings_dragging_slider = (settings_category, key, s_rect)
+            update_settings_drag(click_pos)
+            break
+
+
+def update_settings_drag(mouse_pos):
+    global temp_settings, settings
+    if not settings_dragging_slider:
+        return
+
+    category, key, s_rect = settings_dragging_slider
+    ratio = (mouse_pos[0] - s_rect.x) / max(1, s_rect.width)
+    ratio = max(0.0, min(1.0, ratio))
+
+    if category == "audio":
+        temp_settings["audio"][key] = int(ratio * 100)
+        settings = _deepcopy_settings(temp_settings)
+        save_settings(settings)
+        apply_audio_runtime(settings)
+    elif category == "accessibility":
+        if key == "screen_shake":
+            temp_settings["accessibility"][key] = int(ratio * 100)
+        else:
+            temp_settings["accessibility"][key] = int(60 + ratio * 40)
+        settings = _deepcopy_settings(temp_settings)
+        save_settings(settings)
+
+
+def stop_settings_drag():
+    global settings_dragging_slider
+    settings_dragging_slider = None
 
 
 if __name__ == "__main__":

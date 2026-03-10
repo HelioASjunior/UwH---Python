@@ -4,7 +4,7 @@ Este é um projeto de jogo estilo Roguelike desenvolvido inteiramente em Python.
 O objetivo aqui foi explorar a fundo a biblioteca Pygame, lidando com loops de eventos, renderização de sprites e sistemas de colisão, aplicando conceitos de lógica que são fundamentais tanto para o desenvolvimento de jogos quanto para a manipulação de dados.
 
 🛠️ Tecnologias Utilizadas
-Linguagem Principal: Python 3.x
+Linguagem Principal: Python 3.12
 
 Biblioteca Gráfica: Pygame
 

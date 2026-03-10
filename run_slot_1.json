@@ -1,0 +1,24 @@
+{
+    "char_id": 0,
+    "selected_difficulty": "M\u00c9DIO",
+    "selected_pact": "VELOCIDADE",
+    "selected_bg": "dungeon",
+    "kills": 356,
+    "game_time": 60.468666666669236,
+    "level": 11,
+    "xp": 410,
+    "player_hp": -0.4,
+    "player_upgrades": [
+        "SORTE",
+        "ORBES M\u00c1GICOS",
+        "ORBES M\u00c1GICOS",
+        "ORBES M\u00c1GICOS",
+        "ORBES M\u00c1GICOS",
+        "DANO ++",
+        "ORBES M\u00c1GICOS",
+        "EXPLOS\u00c3O",
+        "TIRO M\u00daLTIPLO",
+        "EXPLOS\u00c3O"
+    ],
+    "run_gold_collected": 0.0
+}
