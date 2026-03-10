@@ -12,5 +12,7 @@ __pycache__/
 
 # Arquivo de salvamento (opcional, se não quiser que seu save pessoal suba)
 save_v2.json
-run_slot_1
-save_data/run_slot_*
+# Ignorar arquivos de save
+run_slot_1.json
+*.json
+!settings.json
