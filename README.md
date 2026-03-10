@@ -1,43 +1,95 @@
-🐍 Roguelike Game - Python & Pygame
-Este é um projeto de jogo estilo Roguelike desenvolvido inteiramente em Python. O projeto marca o início da minha jornada na faculdade de Análise e Desenvolvimento de Sistemas (ADS) e reflete os conhecimentos técnicos que venho consolidando no curso de Engenheiro de Agentes de IA da Asimov.Academy.
+# ⚔️ Nome do Seu Jogo (Ex: Mystic Survivor)
 
-O objetivo aqui foi explorar a fundo a biblioteca Pygame, lidando com loops de eventos, renderização de sprites e sistemas de colisão, aplicando conceitos de lógica que são fundamentais tanto para o desenvolvimento de jogos quanto para a manipulação de dados.
+![Python](https://img.shields.io/badge/Python-3.12-blue?style=for-the-badge&logo=python)
+![Pygame](https://img.shields.io/badge/Pygame-Latest-green?style=for-the-badge)
+![Status](https://img.shields.io/badge/Status-Em_Desenvolvimento-yellow?style=for-the-badge)
 
-🛠️ Tecnologias Utilizadas
-Linguagem Principal: Python 3.12
+Um emocionante jogo de sobrevivência estilo *bullet hell* desenvolvido inteiramente em Python com a biblioteca Pygame. Enfrente hordas de inimigos, suba de nível, escolha suas magias e desbloqueie novos heróis!
 
-Biblioteca Gráfica: Pygame
+---
 
-Conceitos Aplicados: Programação Orientada a Objetos (POO), Vetores, e Gestão de Estados.
+## 🎮 Funcionalidades Principais
 
-🚀 Como Rodar o Projeto
-Para executar o jogo na sua máquina, você precisará do Python instalado.
+* **Sistema de Personagens:** Escolha entre diferentes classes (Guerreiro, Mago, Caçador) com atributos únicos.
+* **Progressão Dinâmica:** Suba de nível e escolha upgrades de status (Dano, Vida, Velocidade).
+* **Sistema de Magias:** Incluindo a poderosa magia de Explosão com animações fluidas.
+* **Menu de Configurações Completo:** Ajuste volume, resolução, controles e opções de acessibilidade.
+* **Persistência de Dados:** Sistema de Save/Load para manter seu progresso e conquistas.
+* **Biomas Diversos:** Escolha onde lutar, com diferentes inimigos e desafios.
 
-Clone o repositório:
+---
 
-Bash
-git clone https://github.com/HelioASjunior/UnderWorldHero-Game
-Crie um ambiente virtual (opcional, mas recomendado):
+## 🛠️ Tecnologias Utilizadas
 
-Bash
-python -m venv venv
-source venv/bin/activate  # No Windows: venv\Scripts\activate
-Instale as dependências:
+* **Linguagem:** Python 3.12
+* **Biblioteca Gráfica:** Pygame
+* **Armazenamento:** JSON (para saves e configurações)
+* **Versionamento:** Git & GitHub
 
-Bash
-pip install pygame
-Inicie o jogo:
+---
 
-Bash
-python main.py
-🚧 Status e Evolução
-O projeto está em desenvolvimento contínuo. Atualmente, estou focado em:
+## 🚀 Como Executar o Jogo
 
-Refinar a inteligência artificial dos inimigos (aplicando o que aprendo na Asimov).
+### Pré-requisitos
+Certifique-se de ter o Python 3.12 instalado.
 
-Otimizar o sistema de banco de dados (SQL) para salvar o progresso dos jogadores e recordes.
+1.  **Clone o repositório:**
+    ```bash
+    git clone [https://github.com/seu-usuario/seu-repositorio.git](https://github.com/seu-usuario/seu-repositorio.git)
+    cd seu-repositorio
+    ```
 
-Implementar novas mecânicas de "procedural generation" para os mapas do Roguelike.
+2.  **Crie um ambiente virtual:**
+    ```bash
+    python -m venv .venv
+    ```
 
-📄 Licença
-Este projeto é destinado a fins de estudo e portfólio. Não é permitida a comercialização ou distribuição do código sem autorização.
+3.  **Ative o ambiente:**
+    * Windows: `.venv\Scripts\activate`
+    * Linux/Mac: `source .venv/bin/activate`
+
+4.  **Instale o Pygame:**
+    ```bash
+    pip install pygame
+    ```
+
+5.  **Inicie o jogo:**
+    ```bash
+    python jogo_final.py
+    ```
+
+---
+
+## ⌨️ Comandos Básicos
+
+| Ação | Tecla (Padrão) |
+| :--- | :--- |
+| Movimentação | W, A, S, D |
+| Pausar Jogo | ESC |
+| Interagir | E / Clique Mouse |
+| Usar Magia | Automático / Espaço |
+
+---
+
+## 📝 Roadmap de Desenvolvimento
+
+- [x] Sistema básico de movimentação e combate.
+- [x] Animações de magias (Explosão).
+- [x] Menu de configurações e acessibilidade.
+- [ ] Adicionar sistema de missões diárias com Timer.
+- [ ] Implementar mais biomas e chefes finais.
+- [ ] Versão executável (.exe) para Windows.
+
+---
+
+## 📄 Licença
+
+Este projeto está sob a licença [MIT](LICENSE).
+
+---
+Desenvolvido com ☕ e Python por Hélio Júnior
+
+
+<p align="center">
+  <img src="screenshots/menu.png" alt="Gameplay do Jogo" width="600">
+</p>
