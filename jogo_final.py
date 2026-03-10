@@ -910,13 +910,14 @@ class Puddle(pygame.sprite.Sprite):
         self.rect.center = self.pos + cam
         self.hitbox.center = self.pos
 
+#quantidade de imagens para cada personagem e tamanho dos personagens (para carregar animações corretamente)
 class Player(pygame.sprite.Sprite):
     def __init__(self, loader, char_id):
         super().__init__()
         self.char_id = char_id  
         data = CHAR_DATA[char_id]
         char_size = data.get("size", (180, 180))
-        self.anim_frames = loader.load_animation(f"char{char_id}", 10, char_size)
+        self.anim_frames = loader.load_animation(f"char{char_id}", 12, char_size)
         self.flipped_frames = [pygame.transform.flip(f, True, False) for f in self.anim_frames]
         self.frame_idx = 0
         self.anim_timer = 0.0
