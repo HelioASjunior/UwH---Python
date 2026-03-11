@@ -76,7 +76,7 @@ Certifique-se de ter o Python 3.12 instalado.
 - [x] Sistema básico de movimentação e combate.
 - [x] Animações de magias (Explosão).
 - [x] Menu de configurações e acessibilidade.
-- [ ] Adicionar sistema de missões diárias com Timer.
+- [x] Adicionar sistema de missões diárias com Timer.
 - [ ] Implementar mais biomas e chefes finais.
 - [ ] Versão executável (.exe) para Windows.
 
@@ -93,3 +93,16 @@ Desenvolvido com ☕ e Python por Hélio Júnior
 <p align="center">
   <img src="screenshots/menu.png" alt="Gameplay do Jogo" width="600">
 </p>
+
+
+🚀 Atualizações Recentes (v1.1.0)
+
+🎨 Interface e Experiência do Usuário (UI/UX)
+Ajuste de Camadas: Corrigida a sobreposição dos valores numéricos de Vida e Mana. Agora o texto possui maior prioridade de renderização e contraste sobre as barras.
+
+Reposicionamento de Elementos: O Grimório foi movido para o canto inferior esquerdo, otimizando o espaço de visão central e seguindo o padrão de ergonomia para RPGs.
+
+Responsividade: Implementado sistema de âncoras para garantir que o Grimório permaneça no canto correto em diferentes resoluções de tela.
+
+🔧 Correções de Bugs (Bug Fixes)
+Removido o erro visual onde o texto de status "sumia" quando a barra estava com pouco preenchimento.

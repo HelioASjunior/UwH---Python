@@ -5,6 +5,20 @@ import os
 import json
 from datetime import datetime, timedelta
 
+from characters import CharacterCombatContext, CharacterDependencies, create_player
+import hud as dark_hud
+from drops import Drop as ModularDrop
+from enemies import Enemy as ModularEnemy, EnemyProjectile as ModularEnemyProjectile
+from upgrades import (
+    get_upgrade_description as get_upgrade_description_mod,
+    pick_upgrades_with_synergy as pick_upgrades_with_synergy_mod,
+)
+from combat.projectiles import (
+    MeleeSlash as CoreMeleeSlash,
+    Projectile as CoreProjectile,
+    projectile_enemy_collision as core_projectile_enemy_collision,
+)
+
 # =========================================================
 # CONFIGURAÇÕES DE PERSISTÊNCIA (SETTINGS.JSON)
 # =========================================================
@@ -146,8 +160,25 @@ def apply_settings(settings_dict):
 SCREEN_W, SCREEN_H = 1920, 1080
 FPS = 60
 ASSET_DIR = "assets" 
-GAME_VERSION = "1.0.0"
+FONT_DARK_PATH = os.path.join(ASSET_DIR, "fonts", "fonte_dark.ttf")
+GAME_VERSION = "1.1.0"
 BUILD_TYPE = "META"
+
+UI_THEME = dark_hud.UI_THEME
+
+
+def load_dark_font(size, bold=False):
+    """Carrega a fonte temática do projeto com fallback seguro.
+
+    Regras:
+
+    - Primeiro tentamos a fonte do projeto em assets/fonts/fonte_dark.ttf.
+    - Se o arquivo não existir, usamos Georgia como fallback seguro.
+    - O cache evita recriar o mesmo objeto de fonte o tempo todo, o que ajuda
+      tanto na performance quanto na consistência visual.
+    """
+
+    return dark_hud.load_dark_font(size, bold=bold, asset_dir=ASSET_DIR)
 
 # =========================================================
 # META-PROGRESSÃO, SAVE E CONQUISTAS
@@ -431,11 +462,29 @@ BOSS_SPAWN_TIME = 300.0 # 5 Minutos para cada boss
 BOSS_MAX_HP = 500
 SHOOTER_PROJ_IMAGE = "enemy_proj" 
 
-# Dados dos Personagens
+# Dados dos Personagens - MENU DE ANIME FRAMES - QUANTIDADE DE IMAGENS
 CHAR_DATA = {
-    0: {"name": "GUERREIRO", "hp": 7, "speed": 280, "desc": "Ult: Tornado de Lâminas", "size": (200, 200), "menu_size": (280, 280), "id": "CHAR_0"},
-    1: {"name": "CAÇADOR", "hp": 4, "speed": 340, "desc": "Ult: Chuva de Flechas", "size": (140, 140), "menu_size": (220, 220), "id": "CHAR_1"},
-    2: {"name": "MAGO", "hp": 5, "speed": 260, "desc": "Ult: Congelamento Temporal", "size": (160, 160), "menu_size": (250, 250), "id": "CHAR_2"}
+    0: {
+        "name": "GUERREIRO", "hp": 7, "speed": 280, "damage": 2,
+        "desc": "Ult: Tornado de Lâminas", "size": (200, 200), "menu_size": (280, 280),
+        "anim_frames": 12, "menu_anim_frames": 10,
+        "dash_duration": 0.26, "dash_cooldown": 2.8,
+        "id": "CHAR_0"
+    },
+    1: {
+        "name": "CAÇADOR", "hp": 4, "speed": 340, "damage": 3,
+        "desc": "Ult: Chuva de Flechas", "size": (200, 200), "menu_size": (280, 280),
+        "anim_frames": 15, "menu_anim_frames": 15,
+        "dash_duration": 0.18, "dash_cooldown": 2.2,
+        "id": "CHAR_1"
+    },
+    2: {
+        "name": "MAGO", "hp": 5, "speed": 260, "damage": 2,
+        "desc": "Ult: Congelamento Temporal", "size": (160, 160), "menu_size": (250, 250),
+        "anim_frames": 11, "menu_anim_frames": 10,
+        "dash_duration": 0.20, "dash_cooldown": 2.5,
+        "id": "CHAR_2"
+    }
 }
 
 # Constantes
@@ -447,7 +496,7 @@ XP_TO_LEVEL_BASE = 100
 SHOT_RANGE = 600.0
 SPAWN_EVERY_BASE = 0.2
 MAX_UPGRADE_LEVEL = 5
-GAME_VERSION = "1.0.0 (Closed Beta)"
+GAME_VERSION = "1.1.0 (Closed Beta)"
 
 # Pool Completa (Será filtrada pelo Unlock System)
 ALL_UPGRADES_POOL = {
@@ -620,10 +669,10 @@ class Button:
         
         if self.locked:
             # Desenha ícone de cadeado ou texto
-            lock_txt = pygame.font.SysFont("Arial", 16, bold=True).render(f"BLOQUEADO: {self.lock_req}", True, (255, 100, 100))
+            lock_txt = load_dark_font(16, bold=True).render(f"BLOQUEADO: {self.lock_req}", True, (255, 100, 100))
             screen.blit(lock_txt, lock_txt.get_rect(center=(self.rect.centerx, self.rect.centery + 15)))
         elif self.subtext:
-            stxt = pygame.font.SysFont("Arial", 16).render(self.subtext, True, (200, 200, 200))
+            stxt = load_dark_font(16).render(self.subtext, True, (200, 200, 200))
             screen.blit(stxt, stxt.get_rect(center=(self.rect.centerx, self.rect.centery + 15)))
 
     def check_hover(self, m_pos, hover_sound=None):
@@ -713,40 +762,6 @@ class AssetLoader:
 # ENTIDADES
 # =========================================================
 
-class Drop(pygame.sprite.Sprite):
-    def __init__(self, pos, kind, loader):
-        super().__init__()
-        self.kind = kind
-        self.pos = pygame.Vector2(pos)
-        
-        size = (55, 55)
-        if kind == "chicken":
-            color = ((255, 100, 100), (200, 50, 50)) 
-            img_name = "item_chicken"
-        elif kind == "magnet":
-            color = ((100, 100, 255), (50, 50, 200)) 
-            img_name = "item_magnet"
-        elif kind == "chest":
-            color = ((255, 215, 0), (200, 150, 0)) 
-            img_name = "item_chest"
-            size = (70, 70) 
-        elif kind == "coin": 
-            color = ((255, 215, 0), (255, 255, 100))
-            img_name = "item_coin"
-            size = (30, 30)
-        else: 
-            color = ((50, 50, 50), (20, 20, 20))     
-            img_name = "item_bomb"
-            
-        self.image = loader.load_image(img_name, size, fallback_colors=color)
-        self.rect = self.image.get_rect(center=pos)
-        self.float_timer = 0.0
-
-    def update(self, dt, cam):
-        self.float_timer += dt * 5
-        offset = math.sin(self.float_timer) * 5
-        self.rect.center = (self.pos.x + cam.x, self.pos.y + cam.y + offset)
-
 class Particle(pygame.sprite.Sprite):
     def __init__(self, pos, color, size, speed, life):
         super().__init__()
@@ -787,7 +802,7 @@ class DamageText(pygame.sprite.Sprite):
         final_color = (255, 215, 0) if is_crit else color
         text_content = f"{amount}!" if is_crit else str(amount)
         
-        font = pygame.font.SysFont("Arial", size, bold=True)
+        font = load_dark_font(size, bold=True)
         self.image = font.render(text_content, True, final_color)
         
         if is_crit:
@@ -814,85 +829,6 @@ class DamageText(pygame.sprite.Sprite):
             self.alpha = int((self.timer / 0.6) * 255)
         self.rect.center = self.world_pos + cam
 
-class Projectile(pygame.sprite.Sprite):
-    def __init__(self, pos, vel, dmg, frames):
-        super().__init__()
-        self.anim_frames = frames 
-        self.frame_idx = 0
-        self.anim_timer = 0
-        self.image = self.anim_frames[0]
-        self.rect = self.image.get_rect()
-        self.hitbox = self.rect.inflate(-max(4, self.rect.width // 6), -max(4, self.rect.height // 6))
-        self.pos, self.vel, self.dmg = pygame.Vector2(pos.x, pos.y), vel, dmg
-        self.pierce, self.hit_enemies = PROJ_PIERCE, []
-        self.ricochet = PROJ_RICOCHET
-        self.is_melee = False
-
-    def update(self, dt, cam):
-        self.pos += self.vel * dt
-        self.anim_timer += dt
-        if self.anim_timer > 0.05:
-            self.anim_timer = 0
-            self.frame_idx = (self.frame_idx + 1) % len(self.anim_frames)
-            self.image = self.anim_frames[self.frame_idx]
-        self.rect.center = self.pos + cam
-        self.hitbox = self.rect.inflate(-max(4, self.rect.width // 6), -max(4, self.rect.height // 6))
-        self.hitbox.center = self.rect.center
-        if not pygame.Rect(-1000,-1000,SCREEN_W+2000,SCREEN_H+2000).collidepoint(self.rect.center): self.kill()
-
-class MeleeSlash(pygame.sprite.Sprite):
-    def __init__(self, player, target_dir, dmg, frames):
-        super().__init__()
-        self.anim_frames = frames
-        self.frame_idx = 0
-        self.anim_timer = 0
-        self.player = player
-        self.target_dir = target_dir.normalize() if target_dir.length() > 0 else pygame.Vector2(1, 0)
-        self.distance = 90  
-        self.is_melee = True 
-        shoot_angle = math.degrees(math.atan2(-self.target_dir.y, self.target_dir.x))
-        self.anim_frames = [pygame.transform.rotate(f, shoot_angle) for f in frames]
-        self.image = self.anim_frames[0]
-        self.rect = self.image.get_rect()
-        self.pos = self.player.pos + (self.target_dir * self.distance)
-        self.dmg = dmg
-        self.hit_enemies = []
-
-    def update(self, dt, cam):
-        self.anim_timer += dt
-        if self.anim_timer > 0.04:  
-            self.anim_timer = 0
-            self.frame_idx += 1
-            if self.frame_idx >= len(self.anim_frames):
-                self.kill(); return
-            self.image = self.anim_frames[self.frame_idx]
-        self.pos = self.player.pos + (self.target_dir * self.distance)
-        self.rect.center = self.pos + cam
-
-class EnemyProjectile(pygame.sprite.Sprite):
-    def __init__(self, pos, vel, dmg, loader, img_name):
-        super().__init__()
-        base_frames = loader.load_animation(img_name, 4, (36, 36), fallback_colors=((255, 120, 0), (200, 50, 0)))
-        shoot_angle = math.degrees(math.atan2(-vel.y, vel.x))
-        self.anim_frames = [pygame.transform.rotate(f, shoot_angle) for f in base_frames]
-        self.frame_idx = 0
-        self.anim_timer = 0
-        self.image = self.anim_frames[0]
-        self.rect = self.image.get_rect()
-        self.pos = pygame.Vector2(pos.x, pos.y)
-        self.vel = vel
-        self.dmg = dmg
-
-    def update(self, dt, cam):
-        self.pos += self.vel * dt
-        self.anim_timer += dt
-        if self.anim_timer > 0.05:
-            self.anim_timer = 0
-            self.frame_idx = (self.frame_idx + 1) % len(self.anim_frames)
-            self.image = self.anim_frames[self.frame_idx]
-        self.rect.center = self.pos + cam
-        if not pygame.Rect(-1000,-1000,SCREEN_W+2000,SCREEN_H+2000).collidepoint(self.rect.center): self.kill()
-
 class Puddle(pygame.sprite.Sprite):
     def __init__(self, pos, loader):
         super().__init__()
@@ -910,292 +846,80 @@ class Puddle(pygame.sprite.Sprite):
         self.rect.center = self.pos + cam
         self.hitbox.center = self.pos
 
-#quantidade de imagens para cada personagem e tamanho dos personagens (para carregar animações corretamente)
-class Player(pygame.sprite.Sprite):
-    def __init__(self, loader, char_id):
-        super().__init__()
-        self.char_id = char_id  
-        data = CHAR_DATA[char_id]
-        char_size = data.get("size", (180, 180))
-        self.anim_frames = loader.load_animation(f"char{char_id}", 12, char_size)
-        self.flipped_frames = [pygame.transform.flip(f, True, False) for f in self.anim_frames]
-        self.frame_idx = 0
-        self.anim_timer = 0.0
-        self.facing_right = True
-        self.image = self.anim_frames[0]
-        self.rect = self.image.get_rect()
-        self.pos = pygame.Vector2(0, 0)
-        
-        self.dash_active = False
-        self.dash_timer = 0.0
-        self.dash_cooldown_timer = 0.0
-        
-        self.ult_charge = 0
-        self.ult_max = ULTIMATE_MAX_CHARGE
-        self.ult_active_timer = 0.0 
-        self.ult_active = False
-        
-        self.hp, self.iframes = PLAYER_MAX_HP, 0.0
+def build_character_dependencies():
+    """Cria o pacote de dependências enviado ao módulo characters.
 
-    def start_dash(self, particles_group):
-        if self.dash_cooldown_timer <= 0:
-            self.dash_active = True
-            self.dash_timer = DASH_DURATION
-            self.dash_cooldown_timer = DASH_COOLDOWN
-            self.iframes = DASH_DURATION + 0.1 
-            return True
-        return False
+    A função existe para deixar a integração explícita e didática: tudo o que o
+    sistema de personagens usa vem daqui, de forma centralizada.
+    """
 
-    def update(self, dt, keys, obstacles, particles_group, biome_type="normal"):
-        if not hasattr(self, "vel"): self.vel = pygame.Vector2(0, 0)
-        
-        self.vel = pygame.Vector2(0, 0)
+    return CharacterDependencies(
+        char_data_map=CHAR_DATA,
+        control_reader=is_control_pressed,
+        particle_cls=Particle,
+        damage_text_cls=DamageText,
+        projectile_cls=lambda pos, vel, dmg, frames: CoreProjectile(
+            pos,
+            vel,
+            dmg,
+            frames,
+            pierce=PROJ_PIERCE,
+            ricochet=PROJ_RICOCHET,
+            screen_size_getter=lambda: (SCREEN_W, SCREEN_H),
+        ),
+        melee_slash_cls=CoreMeleeSlash,
+        gem_cls=Gem,
+        dash_speed=DASH_SPEED,
+        dash_duration=DASH_DURATION,
+        dash_cooldown=DASH_COOLDOWN,
+        ultimate_max_charge=ULTIMATE_MAX_CHARGE,
+        screen_size_getter=lambda: (SCREEN_W, SCREEN_H),
+    )
 
-        if self.dash_active:
-            self.dash_timer -= dt
-            if random.random() < 0.5:
-                particles_group.add(Particle(self.pos, (200, 200, 200), 5, 50, 0.3))
-                
-            if self.dash_timer <= 0:
-                self.dash_active = False
-        
-        if self.dash_cooldown_timer > 0:
-            self.dash_cooldown_timer -= dt
-            
-        if self.ult_active_timer > 0:
-            self.ult_active_timer -= dt
-            if self.ult_active_timer <= 0:
-                self.ult_active = False
 
-        m = pygame.Vector2(0, 0)
-        if is_control_pressed(keys, "up"): m.y -= 1
-        if is_control_pressed(keys, "down"): m.y += 1
-        if is_control_pressed(keys, "left"): m.x -= 1
-        if is_control_pressed(keys, "right"): m.x += 1
-        
-        moving = m.length_squared() > 0
-        if moving:
-            current_speed = DASH_SPEED if self.dash_active else PLAYER_SPEED
-            target_vel = m.normalize() * current_speed
-            
-            self.vel = target_vel
-            
-            if m.x > 0: self.facing_right = True
-            elif m.x < 0: self.facing_right = False
-            
-            move = self.vel * dt
-            self.pos.x += move.x
-            for obs in obstacles:
-                if obs.hitbox.collidepoint(self.pos): self.pos.x -= move.x
-            self.pos.y += move.y
-            for obs in obstacles:
-                if obs.hitbox.collidepoint(self.pos): self.pos.y -= move.y
-            
-            self.anim_timer += dt
-            if self.anim_timer > 0.08:
-                self.anim_timer = 0
-                self.frame_idx = (self.frame_idx + 1) % len(self.anim_frames)
-        else:
-            self.frame_idx = 0
+def build_character_combat_context(dmg_mult_fury=1.0):
+    """Monta o contexto dinâmico usado pelas skills durante a run.
 
-        self.image = self.anim_frames[self.frame_idx] if self.facing_right else self.flipped_frames[self.frame_idx]
-        self.iframes = max(0, self.iframes - dt)
-        self.rect.center = (SCREEN_W//2, SCREEN_H//2)
+    Diferente das dependências estáticas, este contexto reflete o estado atual
+    da partida: grupos de sprites, dano modificado por upgrades, assets ativos
+    e efeitos especiais como a bazuca.
+    """
 
-class Enemy(pygame.sprite.Sprite):
-    def __init__(self, kind, pos, loader, diff_mults, time_scale=1.0, boss_tier=1, is_elite=False): 
-        super().__init__()
-        self.kind = kind
-        self.is_elite = is_elite
-        
-        self.knockback = pygame.Vector2(0, 0)
-        self.flash_timer = 0.0
-        self.frozen_timer = 0.0 
-        
-        if kind == "boss":
-            color = ((50, 0, 0), (0, 0, 0)) 
-            size = (250, 250) 
-            frames = 4 
-        elif kind == "shooter": 
-            color = ((200, 50, 200), (120, 0, 120))
-            size = (110, 95)
-            frames = 11
-        elif kind == "tank": 
-            color = ((50, 200, 50), (0, 120, 0))
-            size = (100, 90)
-            frames = 11
-        elif kind == "elite": 
-            color = ((255, 200, 0), (150, 100, 0))
-            size = (100, 90)
-            frames = 11
-        elif kind == "slime": 
-            color = ((20, 20, 20), (50, 100, 50))
-            size = (90, 80)
-            frames = 10
-        elif kind == "robot": 
-            color = ((100, 100, 150), (50, 50, 100))
-            size = (100, 100)
-            frames = 4
-        else: # Runner
-            color = ((255, 100, 100), (150, 0, 0))
-            size = (100, 100)
-            frames = 11
+    return CharacterCombatContext(
+        enemies=enemies,
+        projectiles=projectiles,
+        particles=particles,
+        damage_texts=damage_texts,
+        gems=gems,
+        projectile_frames_raw=projectile_frames_raw,
+        slash_frames_raw=slash_frames_raw,
+        loader=loader,
+        projectile_speed=PROJECTILE_SPEED,
+        projectile_damage=PROJECTILE_DMG,
+        projectile_count=PROJ_COUNT,
+        fury_multiplier=dmg_mult_fury,
+        bazooka_active=has_bazuca,
+    )
 
-        self.anim_frames = loader.load_animation(kind, frames, size, fallback_colors=color)
-        self.flipped_frames = [pygame.transform.flip(f, True, False) for f in self.anim_frames]
-        
-        self.white_frames = []
-        for frame in self.anim_frames:
-            mask = pygame.mask.from_surface(frame)
-            white_surf = mask.to_surface(setcolor=(255, 255, 255, 255), unsetcolor=(0,0,0,0))
-            self.white_frames.append(white_surf)
-        self.flipped_white_frames = [pygame.transform.flip(f, True, False) for f in self.white_frames]
-        
-        self.frozen_frames = []
-        for frame in self.anim_frames:
-            mask = pygame.mask.from_surface(frame)
-            blue_surf = mask.to_surface(setcolor=(0, 255, 255, 150), unsetcolor=(0,0,0,0))
-            combined = frame.copy()
-            combined.blit(blue_surf, (0,0), special_flags=pygame.BLEND_RGBA_ADD)
-            self.frozen_frames.append(combined)
-        self.flipped_frozen_frames = [pygame.transform.flip(f, True, False) for f in self.frozen_frames]
-        
-        self.frame_idx = 0
-        self.anim_timer = 0.0
-        self.facing_right = True
-        self.shot_timer = 0.0
-        self.shot_cooldown = 3.0
-        self.puddle_timer = 0.0
-        
-        self.image = self.anim_frames[0]
-        self.rect = self.image.get_rect()
-        self.pos = pos
-        
-        stats = {
-            "runner": (2, 150), 
-            "tank": (10, 65), 
-            "elite": (60, 85), 
-            "shooter": (3, 90), 
-            "boss": (BOSS_MAX_HP, 95),
-            "slime": (5, 110), 
-            "robot": (8, 130)  
-        }
-        base_hp, base_spd = stats[kind]
-        
-        if kind == "robot": self.shot_cooldown = 1.0 
-        
-        if kind == "boss":
-            self.hp = base_hp * diff_mults["hp_mult"] * time_scale * boss_tier
-        else:
-            self.hp = base_hp * diff_mults["hp_mult"] * time_scale
-            
-        self.speed = base_spd * diff_mults["spd_mult"] * min(1.5, time_scale) 
-        self.max_hp = self.hp
 
-    def update(self, dt, p_pos, cam, obstacles, enemy_projectiles, puddles, loader, selected_pact="NENHUM"): 
-        self.pos += self.knockback
-        self.knockback *= 0.85 
-        
-        if self.flash_timer > 0: self.flash_timer -= dt
-        
-        if self.frozen_timer > 0:
-            self.frozen_timer -= dt
-            current_set = self.frozen_frames if self.facing_right else self.flipped_frozen_frames
-            self.image = current_set[self.frame_idx] 
-            self.rect.center = self.pos + cam
-            return 
+def create_enemy(kind, pos, diff_mults, time_scale=1.0, boss_tier=1, is_elite=False):
+    """Fábrica de inimigos que usa a implementação modularizada de enemies.py."""
+    return ModularEnemy(
+        kind=kind,
+        pos=pos,
+        loader=loader,
+        diff_mults=diff_mults,
+        screen_size_getter=lambda: (SCREEN_W, SCREEN_H),
+        time_scale=time_scale,
+        boss_tier=boss_tier,
+        is_elite=is_elite,
+        boss_max_hp=BOSS_MAX_HP,
+    )
 
-        d = (p_pos - self.pos)
-        dist = d.length()
-        
-        can_move = self.knockback.length() < 3.0
-        
-        if dist > 0 and can_move:
-            is_ranged_unit = (self.kind == "shooter" or self.kind == "robot")
-            stop_dist = 450 if self.kind == "shooter" else 300 
-            if is_ranged_unit and dist < stop_dist:
-                move = pygame.Vector2(0, 0)
-            else:
-                # Lógica de Fases do Boss
-                move_speed = self.speed
-                
-                # Pacto de Velocidade
-                if selected_pact == "VELOCIDADE":
-                    move_speed *= 1.5
 
-                if self.kind == "boss":
-                    if self.hp < self.max_hp * 0.25: # Fase 3: Fúria Total
-                        move_speed *= 2.0
-                    elif self.hp < self.max_hp * 0.5: # Fase 2: Agitado
-                        move_speed *= 1.5
-                
-                move = (d / dist) * move_speed * dt
-            
-            if d.x > 0: self.facing_right = True
-            elif d.x < 0: self.facing_right = False
-            
-            if move.length_squared() > 0:
-                self.pos += move
-                if self.kind != "boss":
-                    for obs in obstacles:
-                        if obs.hitbox.collidepoint(self.pos): self.pos -= move
-            
-            anim_speed = 0.15 if self.kind == "boss" else 0.1
-            self.anim_timer += dt
-            if self.anim_timer > anim_speed:
-                self.anim_timer = 0
-                self.frame_idx = (self.frame_idx + 1) % len(self.anim_frames)
-        
-        if self.kind == "shooter" or self.kind == "robot" or self.kind == "boss":
-            self.shot_timer += dt
-            
-            # Cooldown dinâmico para o Boss baseado na vida
-            current_cooldown = self.shot_cooldown
-            if self.kind == "boss":
-                if self.hp < self.max_hp * 0.25: current_cooldown *= 0.4
-                elif self.hp < self.max_hp * 0.5: current_cooldown *= 0.7
-
-            if self.shot_timer >= current_cooldown:
-                self.shot_timer = 0.0
-                
-                if self.kind == "boss":
-                    # Padrões de tiro do Boss
-                    num_shots = 8
-                    if self.hp < self.max_hp * 0.25: num_shots = 16
-                    elif self.hp < self.max_hp * 0.5: num_shots = 12
-                    
-                    for i in range(num_shots):
-                        angle = (360 / num_shots) * i
-                        vel = pygame.Vector2(1, 0).rotate(angle) * 350.0
-                        enemy_projectiles.add(EnemyProjectile(self.pos, vel, 1.0, loader, SHOOTER_PROJ_IMAGE))
-                else:
-                    range_limit = 500 if self.kind == "shooter" else 450
-                    if 0 < dist < range_limit:
-                        speed_proj = 300.0 if self.kind == "shooter" else 150.0 
-                        vel = (d / dist) * speed_proj 
-                        enemy_projectiles.add(EnemyProjectile(self.pos, vel, 0.5, loader, SHOOTER_PROJ_IMAGE))
-        
-        if self.kind == "slime":
-            self.puddle_timer += dt
-            if self.puddle_timer >= 2.5: 
-                self.puddle_timer = 0.0
-                puddles.add(Puddle(self.pos, loader))
-
-        if self.flash_timer > 0:
-            current_set = self.white_frames if self.facing_right else self.flipped_white_frames
-        else:
-            current_set = self.anim_frames if self.facing_right else self.flipped_frames
-            
-        self.image = current_set[self.frame_idx]
-        
-        if self.is_elite:
-            # Aura dourada para Elites
-            aura_surf = pygame.Surface(self.image.get_size(), pygame.SRCALPHA)
-            pygame.draw.ellipse(aura_surf, (255, 215, 0, 100), aura_surf.get_rect(), 3)
-            self.image = self.image.copy()
-            self.image.blit(aura_surf, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
-
-        self.rect.center = self.pos + cam
+def create_drop(pos, kind):
+    """Fábrica de drops para centralizar o uso do módulo drops.py."""
+    return ModularDrop(pos, kind, loader)
 
 class Obstacle(pygame.sprite.Sprite):
     def __init__(self, pos, loader, kind):
@@ -1334,8 +1058,7 @@ def load_explosion_frames(loader, size=(128, 128)):
 
 
 def projectile_enemy_collision(projectile, enemy):
-    p_rect = getattr(projectile, "hitbox", projectile.rect)
-    return p_rect.colliderect(enemy.rect)
+    return core_projectile_enemy_collision(projectile, enemy)
 
 
 def play_sfx(name):
@@ -1352,44 +1075,162 @@ def play_sfx(name):
 
 def pick_upgrades_with_synergy(pool, current_upgrades, k=3):
     """Seleciona upgrades com lógica de sinergia e evoluções."""
-    available = [u for u in pool if u in save_data["unlocks"] or u in DEFAULT_UNLOCKS]
-    
-    # Adiciona evoluções se os pré-requisitos forem atendidos
-    for evo_name, evo_data in EVOLUTIONS.items():
-        if (evo_data["base"] in current_upgrades and
-            evo_data["passive"] in current_upgrades and
-            evo_name not in current_upgrades and
-            evo_name not in available):
-            available.append(evo_name)
-    
-    # Remove upgrades já no máximo (simplificado)
-    filtered = [u for u in available if u not in current_upgrades or
-                current_upgrades.count(u) < MAX_UPGRADE_LEVEL]
-    
-    if not filtered:
-        filtered = list(pool)
-    
-    k = min(k, len(filtered))
-    
-    # Prioriza sinergias
-    synergy_picks = []
-    for u in filtered:
-        tags = UPGRADE_TAGS.get(u, set())
-        for existing in current_upgrades:
-            existing_tags = UPGRADE_TAGS.get(existing, set())
-            if tags & existing_tags:
-                synergy_picks.append(u)
-                break
-    
-    result = []
-    if synergy_picks:
-        result.append(random.choice(synergy_picks))
-    
-    remaining = [u for u in filtered if u not in result]
-    random.shuffle(remaining)
-    result.extend(remaining[:k - len(result)])
-    
-    return result[:k]
+    return pick_upgrades_with_synergy_mod(
+        pool=pool,
+        current_upgrades=current_upgrades,
+        unlocks=save_data["unlocks"],
+        default_unlocks=DEFAULT_UNLOCKS,
+        evolutions=EVOLUTIONS,
+        upgrade_tags=UPGRADE_TAGS,
+        max_upgrade_level=MAX_UPGRADE_LEVEL,
+        k=k,
+    )
+
+
+def get_upgrade_description(key):
+    """Retorna a descrição de um upgrade comum ou evolução sem lançar KeyError."""
+    return get_upgrade_description_mod(key, EVOLUTIONS, ALL_UPGRADES_POOL, UPGRADE_POOL)
+
+
+# Feed lateral de skills ativadas durante a run.
+#
+# Ele existe para mostrar rapidamente o que o jogador acabou de usar em termos
+# de ação: dash, ultimate e eventos importantes do herói atual.
+skill_feed = []
+
+# Avisos especiais de upgrade/evolução.
+#
+# Diferente do skill_feed, esta lista é voltada a progresso. Cada entrada usa
+# fade-out por alpha para dar feedback visual elegante sem poluir a tela por
+# tempo demais.
+upgrade_notifications = []
+
+# Estado visual interpolado da HUD.
+#
+# As barras não pulam direto para o valor real. Em vez disso, o valor visual se
+# aproxima do alvo aos poucos, criando uma leitura mais suave quando o jogador
+# toma dano ou gasta recurso.
+ui_visual_state = {"char_id": None, "hp": None, "mana": None}
+
+
+def push_skill_feed(text, color=(220, 220, 220), duration=4.0):
+    """Adiciona um evento ao feed de skills usadas recentemente."""
+    dark_hud.push_skill_feed(text, color=color, duration=duration)
+
+
+def push_upgrade_notification(text, color=None, duration=4.5):
+    """Adiciona um aviso de upgrade com desaparecimento progressivo.
+
+    A cor padrão usa o dourado fosco da interface, reforçando a fantasia sombria
+    sem recorrer a um amarelo saturado demais.
+    """
+    dark_hud.push_upgrade_notification(text, color=color, duration=duration)
+
+
+def smooth_ui_value(current_value, target_value, dt, speed=8.0):
+    """Interpola suavemente um valor visual em direção ao valor real.
+
+    Funcionamento:
+
+    - `target_value` é o valor verdadeiro do gameplay.
+    - `current_value` é o valor que a HUD está exibindo no momento.
+    - A função aproxima um valor do outro usando um fator por segundo, evitando
+      cortes secos na barra.
+
+    Na prática, isso faz a barra “deslizar” até o valor correto, deixando o HUD
+    mais legível e mais elegante visualmente.
+    """
+    if current_value is None:
+        return target_value
+    blend = min(1.0, speed * dt)
+    return current_value + (target_value - current_value) * blend
+
+
+def update_skill_feed(dt):
+    """Atualiza o tempo de vida de logs e avisos visuais da HUD."""
+    dark_hud.update_feedback(dt)
+
+
+def draw_dark_panel(screen, rect, alpha=180, border_color=None):
+    """Desenha um painel translúcido no estilo ferro/pergaminho escuro."""
+    dark_hud.draw_dark_panel(screen, rect, alpha=alpha, border_color=border_color)
+
+
+def draw_metallic_bar(screen, rect, display_value, max_value, fill_color, label, font_s, font_m, current_value=None):
+    """Desenha uma barra com moldura metálica e preenchimento suave.
+
+    O parâmetro `display_value` já deve vir interpolado. Isso desacopla a lógica
+    de animação da lógica de desenho: primeiro suavizamos, depois renderizamos.
+    """
+    safe_max_value = max(1.0, max_value)
+    display_ratio = max(0.0, min(1.0, display_value / safe_max_value))
+    current_ratio = max(0.0, min(1.0, (current_value if current_value is not None else display_value) / safe_max_value))
+
+    outer_rect = pygame.Rect(rect)
+    draw_dark_panel(screen, outer_rect, alpha=185, border_color=UI_THEME["old_gold"])
+
+    fill_area = outer_rect.inflate(-10, -12)
+    pygame.draw.rect(screen, UI_THEME["void_black"], fill_area, border_radius=8)
+    pygame.draw.rect(screen, (55, 20, 20) if fill_color == UI_THEME["blood_red"] else (20, 28, 45), fill_area, 1, border_radius=8)
+
+    current_rect = fill_area.copy()
+    current_rect.width = int(fill_area.width * current_ratio)
+    pygame.draw.rect(screen, tuple(min(255, channel + 30) for channel in fill_color), current_rect, border_radius=8)
+
+    display_rect = fill_area.copy()
+    display_rect.width = int(fill_area.width * display_ratio)
+    pygame.draw.rect(screen, fill_color, display_rect, border_radius=8)
+
+    if display_rect.width > 8:
+        highlight = pygame.Surface((display_rect.width, display_rect.height), pygame.SRCALPHA)
+        highlight.fill((255, 255, 255, 24))
+        screen.blit(highlight, display_rect.topleft)
+
+    title_text = font_s.render(label, True, UI_THEME["parchment"])
+    value_text = font_m.render(f"{int(max(0, current_value if current_value is not None else display_value))}", True, UI_THEME["mist"])
+    screen.blit(title_text, (outer_rect.x + 14, outer_rect.y - 4))
+    screen.blit(value_text, (outer_rect.right - value_text.get_width() - 14, outer_rect.y + 6))
+
+
+def draw_skill_feed_panel(screen, player, font_s, font_m, hud_scale, high_contrast):
+    """Desenha a lista vertical de magias/skills ativas no estilo dark fantasy."""
+    dark_hud.draw_skill_feed_panel(screen, player, font_s, hud_scale, high_contrast, SCREEN_W)
+
+
+def draw_upgrade_notifications(screen, font_s):
+    """Desenha os avisos dourados de upgrades com fade-out por alpha."""
+    dark_hud.draw_upgrade_notifications(screen, font_s)
+
+
+def draw_ui(screen, player, state, font_s, font_m, font_l, hud_scale, high_contrast, level, xp, current_xp_to_level, game_time, kills, dt):
+    """Desenha a HUD por último, acima de todos os sprites e partículas.
+
+    Esta função deve ser chamada como a última etapa de desenho do loop. Esse
+    arranjo funciona como um gerenciamento simples de camadas: o mundo é pintado
+    primeiro, os sprites vêm depois e a interface fecha o frame por cima de tudo.
+    """
+    dark_hud.draw_ui(
+        screen=screen,
+        player=player,
+        state=state,
+        font_s=font_s,
+        font_m=font_m,
+        font_l=font_l,
+        hud_scale=hud_scale,
+        high_contrast=high_contrast,
+        level=level,
+        xp=xp,
+        current_xp_to_level=current_xp_to_level,
+        game_time=game_time,
+        kills=kills,
+        dt=dt,
+        screen_w=SCREEN_W,
+        screen_h=SCREEN_H,
+        player_max_hp=PLAYER_MAX_HP,
+        game_version=GAME_VERSION,
+        build_type=BUILD_TYPE,
+        player_upgrades=player_upgrades,
+    )
 
 
 def apply_upgrade(key, mult=1.0):
@@ -1400,22 +1241,37 @@ def apply_upgrade(key, mult=1.0):
     global CRIT_CHANCE, EXECUTE_THRESH, HAS_FURY, player, player_upgrades
     global has_bazuca, has_buraco_negro, has_serras, has_tesla, has_ceifador, has_berserk
     global PROJ_RICOCHET
+
+    feed_color = UI_THEME["old_gold"] if key in EVOLUTIONS else UI_THEME["faded_gold"]
+    feed_prefix = "Evolução" if key in EVOLUTIONS else "Upgrade"
     
     player_upgrades.append(key)
     
     # Evoluções
     if key == "BAZUCA":
-        has_bazuca = True; return
+        has_bazuca = True
+        push_upgrade_notification(f"{feed_prefix}: {key}", feed_color)
+        return
     elif key == "BURACO NEGRO":
-        has_buraco_negro = True; return
+        has_buraco_negro = True
+        push_upgrade_notification(f"{feed_prefix}: {key}", feed_color)
+        return
     elif key == "SERRAS MÁGICAS":
-        has_serras = True; return
+        has_serras = True
+        push_upgrade_notification(f"{feed_prefix}: {key}", feed_color)
+        return
     elif key == "TESLA":
-        has_tesla = True; return
+        has_tesla = True
+        push_upgrade_notification(f"{feed_prefix}: {key}", feed_color)
+        return
     elif key == "CEIFADOR":
-        has_ceifador = True; return
+        has_ceifador = True
+        push_upgrade_notification(f"{feed_prefix}: {key}", feed_color)
+        return
     elif key == "BERSERK":
-        has_berserk = True; return
+        has_berserk = True
+        push_upgrade_notification(f"{feed_prefix}: {key}", feed_color)
+        return
     
     if key == "DANO ++":         PROJECTILE_DMG += int(2 * mult)
     elif key == "VELOCIDADE ++": PLAYER_SPEED = min(600, PLAYER_SPEED * (1 + 0.15 * mult))
@@ -1438,6 +1294,8 @@ def apply_upgrade(key, mult=1.0):
     elif key == "CAPA INVISÍVEL": pass  # Efeito passivo tratado no Enemy.update
     elif key == "LUVA EXPULSÃO": pass  # Efeito passivo tratado no knockback
     elif key == "TREVO SORTE":   pass  # Efeito passivo em roll_rarity
+
+    push_upgrade_notification(f"{feed_prefix}: {key}", feed_color)
 
 
 def check_achievements(stats_override=None, save_when_unlocked=False):
@@ -1489,7 +1347,8 @@ def load_all_assets():
     menu_char_anims = []
     for char_id, char_data in CHAR_DATA.items():
         menu_size = char_data.get("menu_size", (200, 200))
-        frames = loader.load_animation(f"char{char_id}", 10, menu_size)
+        menu_anim_frames = char_data.get("menu_anim_frames", 10)
+        frames = loader.load_animation(f"char{char_id}", menu_anim_frames, menu_size)
         menu_char_anims.append(frames)
     
     # Música do bioma
@@ -1517,10 +1376,10 @@ def reset_game(char_id=0):
     save_data["stats"]["games_played"] += 1
     
     # Resetar stats base
-    char_data = CHAR_DATA[char_id]
+    char_data = CHAR_DATA.get(char_id, CHAR_DATA[0])
     PLAYER_MAX_HP = char_data["hp"]
     PLAYER_SPEED = char_data["speed"]
-    PROJECTILE_DMG = 2
+    PROJECTILE_DMG = char_data.get("damage", 2)
     SHOT_COOLDOWN = 0.35
     PROJECTILE_SPEED = 560.0
     PICKUP_RANGE = 50.0
@@ -1586,9 +1445,11 @@ def reset_game(char_id=0):
     up_options = []
     up_keys = []
     up_rarities = []
+    dark_hud.reset_feedback()
     
     # Criar jogador
-    player = Player(loader, char_id)
+    player = create_player(loader, char_id, build_character_dependencies())
+    push_skill_feed(f"Herói ativo: {CHAR_DATA[player.char_id]['name']}", (255, 220, 120), 5.0)
 
 
 def clear_current_run_state():
@@ -1632,6 +1493,7 @@ def clear_current_run_state():
     up_options = []
     up_keys = []
     up_rarities = []
+    dark_hud.reset_feedback()
 
 
 # =========================================================
@@ -1685,9 +1547,9 @@ def main():
     }
 
     # Fontes
-    font_s = pygame.font.SysFont("Arial", 24, bold=True)
-    font_m = pygame.font.SysFont("Arial", 40, bold=True)
-    font_l = pygame.font.SysFont("Arial", 80, bold=True)
+    font_s = load_dark_font(18, bold=True)
+    font_m = load_dark_font(28, bold=True)
+    font_l = load_dark_font(46, bold=True)
 
     # Inicializar botões de configurações (precisam das fontes)
     init_settings_buttons(font_m)
@@ -1793,6 +1655,7 @@ def main():
     run_gold_collected = 0.0
     autosave_timer = 0.0
     pause_save_feedback_timer = 0.0
+    current_xp_to_level = XP_TO_LEVEL_BASE
     
     # Inicializa temp_settings para evitar UnboundLocalError
     temp_settings = json.loads(json.dumps(settings))
@@ -1903,30 +1766,20 @@ def main():
                 
                 if event.key == get_control_key_code("dash"):
                     if state == "PLAYING" and player:
-                        if player.start_dash(particles): play_sfx("dash")
+                        dash_feedback = player.start_dash(particles)
+                        if dash_feedback.activated:
+                            play_sfx(dash_feedback.sound_name)
+                            push_skill_feed(dash_feedback.log_text, dash_feedback.log_color)
                 
                 if event.key == get_control_key_code("ultimate"):
-                    if state == "PLAYING" and player and player.ult_charge >= player.ult_max:
-                        player.ult_charge = 0
-                        damage_texts.add(DamageText(player.pos, "ULTIMATE!", True, (255, 0, 255)))
-                        shake_timer = 1.0; shake_strength = 15
-                        play_sfx("ult") 
-                        
-                        if player.char_id == 0: 
-                            player.ult_active = True
-                            player.ult_active_timer = 3.0 
-                        elif player.char_id == 1: 
-                            for i in range(36): 
-                                angle = i * 10
-                                v = pygame.Vector2(1, 0).rotate(angle)
-                                shoot_angle = math.degrees(math.atan2(-v.y, v.x))
-                                rotated_proj_frames = [pygame.transform.rotate(f, shoot_angle) for f in projectile_frames_raw]
-                                p = Projectile(player.pos, v * PROJECTILE_SPEED, PROJECTILE_DMG * 3, rotated_proj_frames)
-                                p.pierce = 5 
-                                projectiles.add(p)
-                        elif player.char_id == 2: 
-                            for e in enemies:
-                                e.frozen_timer = 5.0 
+                    if state == "PLAYING" and player:
+                        ultimate_feedback = player.use_ultimate(build_character_combat_context())
+                        if ultimate_feedback.activated:
+                            damage_texts.add(DamageText(player.pos, "ULTIMATE!", True, (255, 0, 255)))
+                            shake_timer = 1.0
+                            shake_strength = 15
+                            play_sfx("ult")
+                            push_skill_feed(ultimate_feedback.log_text, ultimate_feedback.log_color)
             
             if event.type == pygame.MOUSEBUTTONDOWN:
                     click_pos = event.pos
@@ -2189,12 +2042,21 @@ def main():
             if REGEN_RATE > 0:
                 player.hp = min(PLAYER_MAX_HP, player.hp + REGEN_RATE * dt)
 
+            update_skill_feed(dt)
+
             time_scale = 1.0 + (game_time / 60.0) * 0.20
             
             current_spawn_rate = max(0.1, SPAWN_EVERY_BASE - (game_time / 500.0)) 
             
             biome_type = BG_DATA[selected_bg]["type"]
-            player.update(dt, keys, obstacles, particles_group=particles, biome_type=biome_type)
+            player.update(
+                dt,
+                keys,
+                obstacles,
+                particles_group=particles,
+                biome_type=biome_type,
+                combat_context=build_character_combat_context(),
+            )
             
             if biome_type == "volcano" and player.iframes <= 0:
                 if int(game_time * 2) % 5 == 0 and int((game_time - dt) * 2) % 5 != 0:
@@ -2203,17 +2065,9 @@ def main():
 
             cam = pygame.Vector2(SCREEN_W/2, SCREEN_H/2) - player.pos + shake_offset
 
-            if player.ult_active:
-                if random.random() < 0.8:
-                    particles.add(Particle(player.pos + pygame.Vector2(random.randint(-100,100), random.randint(-100,100)), (200, 200, 255), 6, 200, 0.4))
-                
-                for e in enemies:
-                    if player.pos.distance_to(e.pos) < 250:
-                        e.hp -= 2 
-                        if random.random() < 0.2: damage_texts.add(DamageText(e.pos, 2, False, (255, 255, 0)))
-                        if e.hp <= 0:
-                            if player.ult_charge < player.ult_max: player.ult_charge += 1 
-                            gems.add(Gem(e.pos, loader)); e.kill(); kills += 1
+            combat_context = build_character_combat_context()
+            ult_feedback = player.update_ultimate_effects(combat_context)
+            kills += ult_feedback.kills_gained
 
             shot_t += dt
 
@@ -2237,29 +2091,9 @@ def main():
                     d2 = (e.pos - p_pos).length_squared()
                     if d2 < best_d: best_d = d2; target = e
                 if target:
-                    base_v = (target.pos - player.pos).normalize()
-                    if player.char_id == 0: play_sfx("slash") 
-                    else: play_sfx("shoot") 
-                    
-                    for i in range(PROJ_COUNT):
-                        angle = -(15*(PROJ_COUNT-1))/2 + (i*15)
-                        v = base_v.rotate(angle)
-                        
-                        if player.char_id == 0:
-                            dmg_melee = int((PROJECTILE_DMG + 2) * dmg_mult_fury)
-                            projectiles.add(MeleeSlash(player, v, dmg_melee, slash_frames_raw))
-                        else:
-                            shoot_angle = math.degrees(math.atan2(-v.y, v.x))
-                            if has_bazuca:
-                                rotated_proj_frames = [pygame.transform.scale(pygame.transform.rotate(f, shoot_angle), (300, 300)) for f in projectile_frames_raw]
-                                p_dmg = PROJECTILE_DMG * 3
-                            else:
-                                rotated_proj_frames = [pygame.transform.rotate(f, shoot_angle) for f in projectile_frames_raw]
-                                p_dmg = PROJECTILE_DMG
-
-                            p_dmg = int(p_dmg * dmg_mult_fury)
-
-                            projectiles.add(Projectile(player.pos, v * PROJECTILE_SPEED, p_dmg, rotated_proj_frames))
+                    attack_feedback = player.atacar(target, build_character_combat_context(dmg_mult_fury))
+                    if attack_feedback.activated and attack_feedback.sound_name:
+                        play_sfx(attack_feedback.sound_name)
 
             if AURA_DMG > 0:
                 aura_anim_timer += dt
@@ -2330,12 +2164,12 @@ def main():
                     spawn_y = player.pos.y + math.sin(angle) * radius
                     spawn_pos = pygame.Vector2(spawn_x, spawn_y)
                     kind = "tank" if current_int_time % 120 == 0 else "runner"
-                    enemies.add(Enemy(kind, spawn_pos, loader, DIFFICULTIES[selected_difficulty], time_scale)) 
+                    enemies.add(create_enemy(kind, spawn_pos, DIFFICULTIES[selected_difficulty], time_scale=time_scale)) 
 
             if game_time >= BOSS_SPAWN_TIME * (bosses_spawned + 1):
                 bosses_spawned += 1
                 boss_pos = player.pos + pygame.Vector2(1200, 0) 
-                enemies.add(Enemy("boss", boss_pos, loader, DIFFICULTIES[selected_difficulty], time_scale, boss_tier=bosses_spawned))
+                enemies.add(create_enemy("boss", boss_pos, DIFFICULTIES[selected_difficulty], time_scale=time_scale, boss_tier=bosses_spawned))
                 
                 warn_txt = font_l.render("⚠️ ALERTA DE CHEFÃO ⚠️", True, (255, 0, 0))
                 screen.blit(warn_txt, warn_txt.get_rect(center=(SCREEN_W//2, SCREEN_H//2 - 200)))
@@ -2352,11 +2186,11 @@ def main():
                 elif event_type == "OURO":
                     damage_texts.add(DamageText(player.pos, "💰 CHUVA DE OURO! 💰", True, (255, 215, 0)))
                     for _ in range(20):
-                        drops.add(Drop(player.pos + pygame.Vector2(random.randint(-500, 500), random.randint(-500, 500)), "coin", loader))
+                        drops.add(create_drop(player.pos + pygame.Vector2(random.randint(-500, 500), random.randint(-500, 500)), "coin"))
                 elif event_type == "SLIME":
                     damage_texts.add(DamageText(player.pos, "🟢 INVASÃO DE SLIMES! 🟢", True, (0, 255, 0)))
                     for _ in range(30):
-                        enemies.add(Enemy("slime", player.pos + pygame.Vector2(random.randint(-900, 900), random.randint(-900, 900)), loader, DIFFICULTIES[selected_difficulty], time_scale))
+                        enemies.add(create_enemy("slime", player.pos + pygame.Vector2(random.randint(-900, 900), random.randint(-900, 900)), DIFFICULTIES[selected_difficulty], time_scale=time_scale))
                 elif event_type == "DARKNESS":
                     damage_texts.add(DamageText(player.pos, "🌑 ESCURIDÃO TOTAL! 🌑", True, (100, 100, 255)))
                     darkness_timer = 30.0
@@ -2381,18 +2215,30 @@ def main():
                     spawn_weights.extend([15, 15]) 
                 
                 if game_time < 30:
-                    enemies.add(Enemy("runner", sp, loader, DIFFICULTIES[selected_difficulty], time_scale))
+                    enemies.add(create_enemy("runner", sp, DIFFICULTIES[selected_difficulty], time_scale=time_scale))
                 else:
                     chosen_enemy = random.choices(spawn_list, weights=spawn_weights, k=1)[0]
                     elite_chance = min(0.15, 0.03 + (game_time / 480.0) * 0.05)
                     is_elite = random.random() < elite_chance
                     
-                    enemies.add(Enemy(chosen_enemy, sp, loader, DIFFICULTIES[selected_difficulty], time_scale, is_elite=is_elite))
+                    enemies.add(create_enemy(chosen_enemy, sp, DIFFICULTIES[selected_difficulty], time_scale=time_scale, is_elite=is_elite))
 
-            enemies.update(dt, player.pos, cam, obstacles, enemy_projectiles, puddles, loader, selected_pact)
+            enemies.update(
+                dt,
+                player.pos,
+                cam,
+                obstacles,
+                enemy_projectiles,
+                puddles,
+                loader,
+                selected_pact,
+                ModularEnemyProjectile,
+                Puddle,
+                SHOOTER_PROJ_IMAGE,
+            )
             puddles.update(dt, cam)
             projectiles.update(dt, cam)
-            enemy_projectiles.update(dt, cam)
+            enemy_projectiles.update(dt, cam, SCREEN_W, SCREEN_H)
             gems.update(dt, cam, player.pos) 
             drops.update(dt, cam) 
             obstacles.update(dt, cam)
@@ -2478,9 +2324,9 @@ def main():
                                 session_boss_kills += 1
                                 save_data["stats"]["boss_kills"] += 1
                                 update_mission_progress("boss", 1)
-                                drops.add(Drop(hit.pos, "chest", loader))
+                                drops.add(create_drop(hit.pos, "chest"))
                             elif random.random() < DROP_CHANCE:
-                                drops.add(Drop(hit.pos, "coin", loader))
+                                drops.add(create_drop(hit.pos, "coin"))
 
                             # Salva imediatamente ao desbloquear metas de personagem (Caçador/Mago).
                             check_achievements(save_when_unlocked=True)
@@ -2595,7 +2441,7 @@ def main():
         # Lógica de desenho baseada no estado
         if state == "MENU":
             screen.blit(menu_bg_img, (0,0))
-            # O título já faz parte da imagem de fundo (Underworld Hero)
+
             for b in menu_btns: b.check_hover(m_pos, snd_hover); b.draw(screen)
 
         elif state == "SAVES":
@@ -2659,10 +2505,16 @@ def main():
 
         elif state == "SHOP":
             screen.blit(menu_bg_img, (0,0))
-            overlay = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA); overlay.fill((0, 0, 0, 180)); screen.blit(overlay, (0, 0))
-            t = font_l.render("ÁRVORE DE TALENTOS", True, (255, 215, 0))
+            overlay = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
+            overlay.fill((UI_THEME["void_black"][0], UI_THEME["void_black"][1], UI_THEME["void_black"][2], 185))
+            screen.blit(overlay, (0, 0))
+
+            shop_header = pygame.Rect(int(SCREEN_W * 0.08), int(SCREEN_H * 0.06), int(SCREEN_W * 0.84), 105)
+            draw_dark_panel(screen, shop_header, alpha=180, border_color=UI_THEME["old_gold"])
+
+            t = font_l.render("ARVORE DE TALENTOS", True, UI_THEME["old_gold"])
             screen.blit(t, t.get_rect(center=(SCREEN_W//2, SCREEN_H*0.1)))
-            gold_txt = font_m.render(f"OURO: {save_data['gold']}", True, (255, 215, 0))
+            gold_txt = font_m.render(f"OURO: {save_data['gold']}", True, UI_THEME["faded_gold"])
             screen.blit(gold_txt, gold_txt.get_rect(topright=(SCREEN_W - 30, 20)))
 
             path_names = list(TALENT_TREE.keys())
@@ -2671,9 +2523,12 @@ def main():
                 px = int(SCREEN_W * 0.1)
                 py = int(SCREEN_H * (0.22 + p_idx * 0.22))
                 
-                p_title = font_m.render(path["title"], True, (255, 255, 255))
+                row_panel = pygame.Rect(px - 20, py - 16, int(SCREEN_W * 0.80), 170)
+                draw_dark_panel(screen, row_panel, alpha=175, border_color=UI_THEME["iron"])
+
+                p_title = font_m.render(path["title"], True, UI_THEME["parchment"])
                 screen.blit(p_title, (px, py))
-                p_desc = font_s.render(path["desc"], True, (180, 180, 180))
+                p_desc = font_s.render(path["desc"], True, UI_THEME["mist"])
                 screen.blit(p_desc, (px, py + 40))
 
                 skill_keys = list(path["skills"].keys())
@@ -2682,9 +2537,9 @@ def main():
                     lvl = save_data["perm_upgrades"].get(s_key, 0)
                     sy = py + 80 + s_idx * 45
                     
-                    s_txt = font_s.render(f"{skill['name']} ({lvl}/{skill['max']})", True, (255, 255, 100))
+                    s_txt = font_s.render(f"{skill['name']} ({lvl}/{skill['max']})", True, UI_THEME["old_gold"])
                     screen.blit(s_txt, (px + 50, sy))
-                    sd_txt = pygame.font.SysFont("Arial", 18).render(skill["desc"], True, (200, 200, 200))
+                    sd_txt = load_dark_font(18).render(skill["desc"], True, (200, 200, 200))
                     screen.blit(sd_txt, (px + 300, sy + 5))
 
                     btn_found = [b for name, key, b in shop_talent_btns if name == p_name and key == s_key][0]
@@ -2860,7 +2715,7 @@ def main():
                     img = orb_img if not has_serras else pygame.transform.scale(orb_img, (80, 80))
                     screen.blit(img, img.get_rect(center=orb_p + cam))
 
-            if player.ult_active and player.char_id == 0:
+            if player.ult_active and player.should_draw_tornado_effect():
                 img = pygame.transform.rotate(tornado_img, (pygame.time.get_ticks() / 5) % 360)
                 screen.blit(img, img.get_rect(center=(SCREEN_W//2, SCREEN_H//2)), special_flags=pygame.BLEND_RGBA_ADD)
 
@@ -2868,61 +2723,6 @@ def main():
                 exp.draw(screen, cam)
 
             screen.blit(player.image, player.rect)
-
-            # HUD Minimalista e Compacta
-            ui_multiplier = max(0.6, min(1.0, settings["accessibility"].get("ui_size", 100) / 100.0))
-            hud_scale = 0.6 * ui_multiplier
-            high_contrast = settings["accessibility"].get("high_contrast", "Off") == "On"
-            
-            # Barra de Vida (Canto Superior Esquerdo) - Mais fina e compacta
-            bar_w, bar_h = int(200 * hud_scale), int(18 * hud_scale)
-            hp_bg = (0, 0, 0) if high_contrast else (10, 10, 10)
-            hp_fg = (255, 40, 40) if high_contrast else (200, 30, 30)
-            hp_tc = (255, 255, 0) if high_contrast else (255, 255, 255)
-            pygame.draw.rect(screen, hp_bg, (10, 10, bar_w, bar_h), border_radius=3)
-            pygame.draw.rect(screen, hp_fg, (10, 10, int(bar_w * (player.hp/PLAYER_MAX_HP)), bar_h), border_radius=3)
-            hp_text = font_s.render(f"{int(player.hp)}", True, hp_tc)
-            screen.blit(hp_text, (10 + bar_w + 5, 8))
-
-            # Barra de XP (Topo da tela, ultra fina)
-            xp_bar_h = 4
-            xp_bg = (0, 0, 0) if high_contrast else (20, 20, 20)
-            xp_fg = (0, 255, 255) if high_contrast else (0, 180, 255)
-            level_col = (255, 255, 0) if high_contrast else (200, 200, 200)
-            pygame.draw.rect(screen, xp_bg, (0, 0, SCREEN_W, xp_bar_h))
-            pygame.draw.rect(screen, xp_fg, (0, 0, int(SCREEN_W * (xp/current_xp_to_level)), xp_bar_h))
-            level_text = font_s.render(f"L{level}", True, level_col)
-            screen.blit(level_text, (SCREEN_W - 40, 5))
-
-            # Cronômetro e Kills (Centro Superior) - Compactados
-            time_m, time_s = divmod(int(game_time), 60)
-            time_col = (255, 255, 0) if high_contrast else (255, 255, 255)
-            time_text = font_s.render(f"{time_m:02}:{time_s:02} | KILLS: {kills}", True, time_col)
-            time_rect = time_text.get_rect(midtop=(SCREEN_W//2, 8))
-            pygame.draw.rect(screen, (0,0,0,100), time_rect.inflate(15, 4), border_radius=5)
-            screen.blit(time_text, time_rect)
-
-            # Habilidades (Canto Inferior Direito) - Minimalistas
-            icon_size = int(45 * hud_scale)
-            margin = 15
-            
-            # Dash
-            dash_pos = (SCREEN_W - margin - icon_size//2, SCREEN_H - margin - icon_size//2)
-            pygame.draw.circle(screen, (15, 15, 15), dash_pos, icon_size//2)
-            if player.dash_cooldown_timer > 0:
-                ratio = 1 - (player.dash_cooldown_timer / DASH_COOLDOWN)
-                pygame.draw.arc(screen, (0, 120, 255), (dash_pos[0]-icon_size//2, dash_pos[1]-icon_size//2, icon_size, icon_size), math.pi/2, math.pi/2 + (2*math.pi*ratio), 4)
-            else:
-                pygame.draw.circle(screen, (0, 120, 255), dash_pos, icon_size//2, 2)
-
-            # Ultimate
-            ult_pos = (dash_pos[0] - icon_size - 15, dash_pos[1])
-            pygame.draw.circle(screen, (15, 15, 15), ult_pos, icon_size//2)
-            ult_ratio = player.ult_charge / player.ult_max
-            ult_color = (200, 0, 200) if ult_ratio >= 1 else (80, 0, 80)
-            pygame.draw.arc(screen, ult_color, (ult_pos[0]-icon_size//2, ult_pos[1]-icon_size//2, icon_size, icon_size), math.pi/2, math.pi/2 + (2*math.pi*ult_ratio), 4)
-            if ult_ratio >= 1:
-                pygame.draw.circle(screen, (200, 0, 200), ult_pos, icon_size//2, 1)
 
             if state == "UPGRADE":
                 overlay = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA); overlay.fill((0,0,0,180)); screen.blit(overlay, (0,0))
@@ -2941,7 +2741,7 @@ def main():
 
                     title = font_m.render(key, True, (255,255,255))
                     screen.blit(title, (rect.x + 100, rect.y + 15))
-                    desc = font_s.render(UPGRADE_POOL[key], True, (200,200,200))
+                    desc = font_s.render(get_upgrade_description(key), True, (200,200,200))
                     screen.blit(desc, (rect.x + 100, rect.y + 60))
                     
                     rarity_txt = font_s.render(rarity_name, True, rarity_data["color"]); 
@@ -2969,7 +2769,7 @@ def main():
                         screen.blit(icon, icon_rect)
 
                     text_color = (255, 100, 255) if loot in EVOLUTIONS else (255, 255, 255)
-                    desc = EVOLUTIONS[loot]["desc"] if loot in EVOLUTIONS else ""
+                    desc = get_upgrade_description(loot)
                         
                     txt = font_s.render(f"+ {loot} {('- ' + desc) if desc else ''}", True, text_color)
                     screen.blit(txt, (text_x, base_y - txt.get_height() // 2))
@@ -2987,10 +2787,10 @@ def main():
 
             if state == "PAUSED":
                 overlay = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
-                overlay.fill((0, 0, 0, 180)) 
+                overlay.fill((UI_THEME["void_black"][0], UI_THEME["void_black"][1], UI_THEME["void_black"][2], 195)) 
                 screen.blit(overlay, (0, 0))
                     
-                msg = font_l.render("JOGO PAUSADO", True, (255, 255, 255))
+                msg = font_l.render("JOGO PAUSADO", True, UI_THEME["old_gold"])
                 screen.blit(msg, (SCREEN_W//2 - msg.get_width()//2, SCREEN_H * 0.15))
                     
                 panel_w, panel_h = 450, 550
@@ -2998,10 +2798,9 @@ def main():
                 panel_y = int(SCREEN_H * 0.3)
                 panel_rect = pygame.Rect(panel_x, panel_y, panel_w, panel_h)
                     
-                pygame.draw.rect(screen, (30, 30, 45, 240), panel_rect, border_radius=15)
-                pygame.draw.rect(screen, (0, 255, 255), panel_rect, 3, border_radius=15)
+                draw_dark_panel(screen, panel_rect, alpha=190, border_color=UI_THEME["old_gold"])
                     
-                stat_title = font_m.render("STATUS DO HERÓI", True, (255, 215, 0))
+                stat_title = font_m.render("STATUS DO HEROI", True, UI_THEME["old_gold"])
                 screen.blit(stat_title, stat_title.get_rect(center=(panel_rect.centerx, panel_rect.y + 40)))
                     
                 stats_lines = [
@@ -3020,7 +2819,7 @@ def main():
                     
                 start_y = panel_rect.y + 100
                 for idx, line in enumerate(stats_lines):
-                        line_txt = font_s.render(line, True, (200, 220, 255))
+                        line_txt = font_s.render(line, True, UI_THEME["mist"])
                         screen.blit(line_txt, (panel_rect.x + 30, start_y + (idx * 40)))
 
                 for b in pause_btns: 
@@ -3035,13 +2834,20 @@ def main():
                     screen.blit(saved_txt, saved_rect)
 
             if state == "GAME_OVER":
-                overlay = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA); overlay.fill((150,0,0,150)); screen.blit(overlay, (0,0))
-                msg = font_l.render("GAME OVER", True, (255,255,255)); screen.blit(msg, (SCREEN_W//2 - msg.get_width()//2, SCREEN_H//2 - 50))
+                overlay = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
+                overlay.fill((UI_THEME["void_black"][0], 8, 8, 205))
+                screen.blit(overlay, (0,0))
+
+                go_panel = pygame.Rect(SCREEN_W//2 - 440, SCREEN_H//2 - 220, 880, 360)
+                draw_dark_panel(screen, go_panel, alpha=200, border_color=UI_THEME["blood_red"])
+
+                msg = font_l.render("GAME OVER", True, UI_THEME["blood_red"])
+                screen.blit(msg, (SCREEN_W//2 - msg.get_width()//2, SCREEN_H//2 - 120))
                 minutes = int(game_time // 60)
                 seconds = int(game_time % 60)
-                time_msg = font_m.render(f"TEMPO SOBREVIVIDO: {minutes:02}:{seconds:02}", True, (255, 215, 0))
+                time_msg = font_m.render(f"TEMPO SOBREVIVIDO: {minutes:02}:{seconds:02}", True, UI_THEME["old_gold"])
                 screen.blit(time_msg, (SCREEN_W//2 - time_msg.get_width()//2, SCREEN_H//2 + 50))
-                gold_run_msg = font_m.render(f"GOLD COLETADO: {int(run_gold_collected)}", True, (255, 255, 120))
+                gold_run_msg = font_m.render(f"OURO COLETADO: {int(run_gold_collected)}", True, UI_THEME["faded_gold"])
                 screen.blit(gold_run_msg, (SCREEN_W//2 - gold_run_msg.get_width()//2, SCREEN_H//2 + 105))
                 game_over_btn.check_hover(m_pos, snd_hover)
                 game_over_btn.draw(screen)
@@ -3053,14 +2859,28 @@ def main():
                         t = font_s.render(name, True, (200, 255, 200))
                         screen.blit(t, (SCREEN_W//2 - t.get_width()//2, SCREEN_H//2 + 150 + i*30))
 
-        # versão
-        w, h = screen.get_size()
-        version_str = f"v{GAME_VERSION} ({BUILD_TYPE})"
-        shadow = font_s.render(version_str, True, (0,0,0))
-        text   = font_s.render(version_str, True, (160,160,160))
-        rect = text.get_rect(bottomright=(w-12, h-10))
-        screen.blit(shadow, (rect.x+1, rect.y+1))
-        screen.blit(text, rect)
+        ui_multiplier = max(0.6, min(1.0, settings["accessibility"].get("ui_size", 100) / 100.0))
+        hud_scale = 0.6 * ui_multiplier
+        high_contrast = settings["accessibility"].get("high_contrast", "Off") == "On"
+
+        # A interface é desenhada por último para garantir a sobreposição total
+        # sobre cenário, partículas, inimigos e demais sprites.
+        draw_ui(
+            screen,
+            player,
+            state,
+            font_s,
+            font_m,
+            font_l,
+            hud_scale,
+            high_contrast,
+            level,
+            xp,
+            current_xp_to_level,
+            game_time,
+            kills,
+            dt,
+        )
                         
         pygame.display.flip()
 
@@ -3088,7 +2908,7 @@ def draw_settings_menu(screen, settings, temp_settings, category, m_pos, font_l,
     title_text = font_l.render("CONFIGURAÇÕES", True, (255, 255, 255))
     screen.blit(title_text, title_text.get_rect(center=(SCREEN_W / 2, SCREEN_H * 0.1)))
     
-    version_text = font_s.render(f"v1.0.0", True, (200, 200, 200))
+    version_text = font_s.render(f"v1.1.0", True, (200, 200, 200))
     screen.blit(version_text, (20, 20))
     
     fps_text = font_s.render(f"FPS: {int(clock.get_fps())}", True, (200, 200, 200))
